@@ -1,0 +1,97 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "manufacturer_brand": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Manufacturer Brand"
+    },
+    "legal_manufacturer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Legal Manufacturer"
+    },
+    "system_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "System Id"
+    },
+    "document_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Document Name"
+    },
+    "edition": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Edition"
+    },
+    "copyright_notice": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Copyright Notice"
+    },
+    "evidence_pages": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Evidence Pages",
+      "type": "array"
+    },
+    "unresolved": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved",
+      "type": "array"
+    }
+  },
+  "required": [
+    "manufacturer_brand",
+    "legal_manufacturer",
+    "system_id",
+    "document_name",
+    "edition",
+    "copyright_notice",
+    "evidence_pages",
+    "unresolved"
+  ],
+  "title": "Identity",
+  "type": "object"
+}

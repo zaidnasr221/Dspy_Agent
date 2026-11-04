@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "ReviewFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "severity": {
+          "enum": [
+            "question",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "bbox": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "title": "Bbox",
+          "type": "array"
+        }
+      },
+      "required": [
+        "severity",
+        "message",
+        "bbox"
+      ],
+      "title": "ReviewFinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "unit_id": {
+      "title": "Unit Id",
+      "type": "string"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/ReviewFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "scope": {
+      "title": "Scope",
+      "type": "string"
+    }
+  },
+  "required": [
+    "unit_id",
+    "findings",
+    "scope"
+  ],
+  "title": "VisualReview",
+  "type": "object"
+}

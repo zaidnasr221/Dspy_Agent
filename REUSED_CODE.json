@@ -1,0 +1,14 @@
+{
+  "source_directory": "E:\\projects_DomApp\\details_ocr_graph\\fws50_working\\extraction_pilot",
+  "files": {
+    "work_queue.py": "9d5d531638a9793c44802ee4aa53ac9680b616962c95631ff4d70aec9a11ed42",
+    "full_catalogue.py": "ffb1e28ddab98ba160e2c1cc4ee75a67399950499b0b0359d8adf1f4053d52ef",
+    "normalize_catalogue.py": "4e58a9ee766568c44d7919377441d1f2dac7a09654b0cd1b9d1deb37900ffad8",
+    "file_lock.py": "c50c3ae9093c1a1382f260b0d0e44faebdf9625fc7f4d7e29f7f39f83f06e6d6"
+  },
+  "adaptations": [
+    "Existing Pydantic schemas and validator",
+    "Existing representation normalizer and cross-platform locking",
+    "Existing queue transactions, attempts, leases and dependency checks; new paths are portable"
+  ]
+}

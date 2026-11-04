@@ -1,0 +1,620 @@
+{
+  "pdf_page": 43,
+  "page_kind": "curated_drawing_detail",
+  "details": [
+    {
+      "id": "main",
+      "title": "Assembly / Face mounting connector assembly",
+      "drawing_refs": [
+        "geffp009",
+        "gefff038"
+      ],
+      "bbox": [
+        0.0,
+        0.0,
+        1.0,
+        1.0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "technal_mx:EM070",
+      "detail_id": "main",
+      "article_id": "EM070",
+      "kind": "component_definition",
+      "label": "EM070 — Face-mounting connector / spigot",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.13736262553195197,
+        0.2851762044530759,
+        0.30865752007460273,
+        0.30259564961001256
+      ]
+    },
+    {
+      "id": "technal_mx:VE116",
+      "detail_id": "main",
+      "article_id": "VE116",
+      "kind": "component_definition",
+      "label": "VE116 — Screw securing connector to transom",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.13736262553195197,
+        0.32443871115730993,
+        0.31327364055861817,
+        0.34185815631424665
+      ]
+    },
+    {
+      "id": "technal_mx:VM034",
+      "detail_id": "main",
+      "article_id": "VM034",
+      "kind": "component_definition",
+      "label": "VM034 — Screws securing assembly to mullion",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.13736262553195197,
+        0.36370112723929393,
+        0.36185374338856935,
+        0.38112057239623065
+      ]
+    },
+    {
+      "id": "assembly",
+      "detail_id": "main",
+      "article_id": null,
+      "kind": "assembly",
+      "label": "EM070 transom-to-mullion junction",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "id": "connector",
+      "detail_id": "main",
+      "article_id": "EM070",
+      "kind": "component_instance",
+      "label": "Connector — callout 1",
+      "material": null,
+      "quantity": null,
+      "callout": "1",
+      "bbox": [
+        0.389,
+        0.472,
+        0.529,
+        0.6
+      ]
+    },
+    {
+      "id": "transom",
+      "detail_id": "main",
+      "article_id": null,
+      "kind": "component_instance",
+      "label": "Horizontal member / transom",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "id": "mullion",
+      "detail_id": "main",
+      "article_id": null,
+      "kind": "component_instance",
+      "label": "Vertical member / mullion",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "id": "transom_nose",
+      "detail_id": "main",
+      "article_id": null,
+      "kind": "feature",
+      "label": "Transom nose",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.1559687818972531,
+        0.2982636523144705,
+        0.3017353900007126,
+        0.31568311559585727
+      ]
+    },
+    {
+      "id": "ve116",
+      "detail_id": "main",
+      "article_id": "VE116",
+      "kind": "component_instance",
+      "label": "VE116 screw — callout 2",
+      "material": null,
+      "quantity": 1.0,
+      "callout": "2",
+      "bbox": [
+        0.506,
+        0.485,
+        0.587,
+        0.535
+      ]
+    },
+    {
+      "id": "vm034_group",
+      "detail_id": "main",
+      "article_id": "VM034",
+      "kind": "instance_group",
+      "label": "VM034 screws — callout 3",
+      "material": null,
+      "quantity": 2.0,
+      "callout": "3",
+      "bbox": [
+        0.515,
+        0.542,
+        0.625,
+        0.627
+      ]
+    },
+    {
+      "id": "vm034_1",
+      "detail_id": "main",
+      "article_id": "VM034",
+      "kind": "component_instance",
+      "label": "Visible VM034 screw 1",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.515,
+        0.542,
+        0.625,
+        0.627
+      ]
+    },
+    {
+      "id": "vm034_2",
+      "detail_id": "main",
+      "article_id": "VM034",
+      "kind": "component_instance",
+      "label": "Visible VM034 screw 2",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.515,
+        0.542,
+        0.625,
+        0.627
+      ]
+    },
+    {
+      "id": "connection_ct",
+      "detail_id": "main",
+      "article_id": null,
+      "kind": "connection",
+      "label": "Connector-to-transom fixing",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.13736262553195197,
+        0.32443871115730993,
+        0.31327364055861817,
+        0.34185815631424665
+      ]
+    },
+    {
+      "id": "connection_am",
+      "detail_id": "main",
+      "article_id": null,
+      "kind": "connection",
+      "label": "Assembly-to-mullion fixing",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.13736262553195197,
+        0.36370112723929393,
+        0.36185374338856935,
+        0.38112057239623065
+      ]
+    },
+    {
+      "id": "assembly_driver",
+      "detail_id": "main",
+      "article_id": null,
+      "kind": "tool",
+      "label": "TORX 25 assembly driver",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "id": "weatherproofing",
+      "detail_id": "main",
+      "article_id": null,
+      "kind": "procedure",
+      "label": "Face-mount connector weatherproofing",
+      "material": null,
+      "quantity": null,
+      "callout": null,
+      "bbox": [
+        0.0,
+        0.0,
+        1.0,
+        1.0
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "source": "vm034_1",
+      "predicate": "member_of",
+      "target": "vm034_group",
+      "basis": "drawing_reading",
+      "condition": null,
+      "bbox": [
+        0.515,
+        0.542,
+        0.625,
+        0.627
+      ]
+    },
+    {
+      "source": "vm034_1",
+      "predicate": "instance_of",
+      "target": "technal_mx:VM034",
+      "basis": "inference",
+      "condition": null,
+      "bbox": [
+        0.1559687818972531,
+        0.3767885751006886,
+        0.34798267096415,
+        0.3942080202576253
+      ]
+    },
+    {
+      "source": "vm034_2",
+      "predicate": "member_of",
+      "target": "vm034_group",
+      "basis": "drawing_reading",
+      "condition": null,
+      "bbox": [
+        0.515,
+        0.542,
+        0.625,
+        0.627
+      ]
+    },
+    {
+      "source": "vm034_2",
+      "predicate": "instance_of",
+      "target": "technal_mx:VM034",
+      "basis": "inference",
+      "condition": null,
+      "bbox": [
+        0.1559687818972531,
+        0.3767885751006886,
+        0.34798267096415,
+        0.3942080202576253
+      ]
+    },
+    {
+      "source": "connector",
+      "predicate": "instance_of",
+      "target": "technal_mx:EM070",
+      "basis": "inference",
+      "condition": null,
+      "bbox": [
+        0.13736262553195197,
+        0.2851762044530759,
+        0.30865752007460273,
+        0.30259564961001256
+      ]
+    },
+    {
+      "source": "ve116",
+      "predicate": "instance_of",
+      "target": "technal_mx:VE116",
+      "basis": "inference",
+      "condition": null,
+      "bbox": [
+        0.15596875626410145,
+        0.3375262315165046,
+        0.3361508951865555,
+        0.35494567667344135
+      ]
+    },
+    {
+      "source": "connector",
+      "predicate": "part_of",
+      "target": "assembly",
+      "basis": "drawing_reading",
+      "condition": null,
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "source": "transom",
+      "predicate": "part_of",
+      "target": "assembly",
+      "basis": "drawing_reading",
+      "condition": null,
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "source": "mullion",
+      "predicate": "part_of",
+      "target": "assembly",
+      "basis": "drawing_reading",
+      "condition": null,
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "source": "ve116",
+      "predicate": "part_of",
+      "target": "assembly",
+      "basis": "drawing_reading",
+      "condition": null,
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "source": "vm034_group",
+      "predicate": "part_of",
+      "target": "assembly",
+      "basis": "drawing_reading",
+      "condition": null,
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "source": "transom",
+      "predicate": "has_feature",
+      "target": "transom_nose",
+      "basis": "explicit_text",
+      "condition": null,
+      "bbox": [
+        0.1559687818972531,
+        0.2982636523144705,
+        0.3017353900007126,
+        0.31568311559585727
+      ]
+    },
+    {
+      "source": "connector",
+      "predicate": "inserted_into",
+      "target": "transom_nose",
+      "basis": "explicit_text",
+      "condition": null,
+      "bbox": [
+        0.13736262553195197,
+        0.2851762044530759,
+        0.30865752007460273,
+        0.30259564961001256
+      ]
+    },
+    {
+      "source": "connection_ct",
+      "predicate": "joins",
+      "target": "connector",
+      "basis": "explicit_text",
+      "condition": null,
+      "bbox": [
+        0.13736262553195197,
+        0.32443871115730993,
+        0.31327364055861817,
+        0.34185815631424665
+      ]
+    },
+    {
+      "source": "connection_ct",
+      "predicate": "joins",
+      "target": "transom",
+      "basis": "explicit_text",
+      "condition": null,
+      "bbox": [
+        0.13736262553195197,
+        0.32443871115730993,
+        0.31327364055861817,
+        0.34185815631424665
+      ]
+    },
+    {
+      "source": "ve116",
+      "predicate": "fastens",
+      "target": "connection_ct",
+      "basis": "explicit_text",
+      "condition": null,
+      "bbox": [
+        0.13736262553195197,
+        0.32443871115730993,
+        0.31327364055861817,
+        0.34185815631424665
+      ]
+    },
+    {
+      "source": "connection_am",
+      "predicate": "joins",
+      "target": "connector",
+      "basis": "drawing_reading",
+      "condition": null,
+      "bbox": [
+        0.13736262553195197,
+        0.36370112723929393,
+        0.36185374338856935,
+        0.38112057239623065
+      ]
+    },
+    {
+      "source": "connection_am",
+      "predicate": "joins",
+      "target": "mullion",
+      "basis": "explicit_text",
+      "condition": null,
+      "bbox": [
+        0.13736262553195197,
+        0.36370112723929393,
+        0.36185374338856935,
+        0.38112057239623065
+      ]
+    },
+    {
+      "source": "vm034_group",
+      "predicate": "fastens",
+      "target": "connection_am",
+      "basis": "explicit_text",
+      "condition": null,
+      "bbox": [
+        0.13736262553195197,
+        0.36370112723929393,
+        0.36185374338856935,
+        0.38112057239623065
+      ]
+    },
+    {
+      "source": "assembly_driver",
+      "predicate": "used_for",
+      "target": "assembly",
+      "basis": "drawing_reading",
+      "condition": "Assembly tool panel; do not infer fastener dimensions from driver size",
+      "bbox": [
+        0.1,
+        0.23,
+        0.94,
+        0.8
+      ]
+    },
+    {
+      "source": "weatherproofing",
+      "predicate": "related_procedure_for",
+      "target": "assembly",
+      "basis": "inference",
+      "condition": null,
+      "bbox": [
+        0.338095246639622,
+        0.0697288825145601,
+        0.853951991157588,
+        0.09936221329113767
+      ]
+    }
+  ],
+  "measurements": [],
+  "tables": [],
+  "instructions": [
+    {
+      "detail_id": "main",
+      "sequence": 1,
+      "text": "insert connector in transom nose",
+      "condition": null,
+      "article_refs": [
+        "EM070"
+      ],
+      "bbox": [
+        0.13736262553195197,
+        0.2851762044530759,
+        0.30865752007460273,
+        0.30259564961001256
+      ]
+    },
+    {
+      "detail_id": "main",
+      "sequence": 2,
+      "text": "secure connector to transom",
+      "condition": null,
+      "article_refs": [
+        "VE116"
+      ],
+      "bbox": [
+        0.13736262553195197,
+        0.32443871115730993,
+        0.31327364055861817,
+        0.34185815631424665
+      ]
+    },
+    {
+      "detail_id": "main",
+      "sequence": 3,
+      "text": "place assembly in mullion and secure",
+      "condition": null,
+      "article_refs": [
+        "VM034"
+      ],
+      "bbox": [
+        0.13736262553195197,
+        0.36370112723929393,
+        0.36185374338856935,
+        0.38112057239623065
+      ]
+    }
+  ],
+  "unresolved": [
+    "Metal component materials, alloy/grade and finish are not specified in these linked pages.",
+    "Fastener diameters, lengths, grades and general quantity rules remain unknown.",
+    "Mullion article number and complete EM070 profile compatibility need a component/concept catalogue.",
+    "Hole depth and fastener-to-hole mapping are not established.",
+    "Manufacturing datums and global coordinates require designer review.",
+    "Weatherproofing option selection and its sequence relative to assembly are not explicitly stated."
+  ],
+  "_metadata": {
+    "manufacturer_brand": "TECHNAL",
+    "system_id": "technal:mx_geode",
+    "source_document_id": "technal_mx_fabrication_4567_001",
+    "producer": "reuse of Codex source-reviewed EM070 graph",
+    "review_status": "proposed",
+    "new_api_cost_for_this_attempt_usd": 0,
+    "source_graph": "../../em070/assembly_graph.json",
+    "worker_version": "whole-catalogue-1"
+  }
+}
