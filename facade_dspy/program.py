@@ -1,4 +1,4 @@
-"""Bounded DSPy agent: deterministic checks control the Claude Code reading tool."""
+"""Bounded DSPy agent: deterministic checks control the selected visual backend."""
 from pathlib import Path
 import json
 import re
@@ -14,8 +14,10 @@ from .source import acquire,index,make_units,split_unit,prepare_images
 from .schema import Identity,PageResult,VisualResult,VisualReview,validate
 from .normalize import normalize
 from .budget import Budget,BudgetStopped
-from .claude_tool import ClaudeCode,IncompleteRead
+from .tool_protocol import IncompleteRead
+from .model import resolve_model,make_backend_factory
 from .locking import exclusive_lock
+from .profiling import PipelineProfiler
 
 READING_RULES='''Read source.png and focus.png with the Read tool; native.txt is only a search aid.
 The focus image is a crop of the box in scope.json. Extract only entities whose source belongs
@@ -69,18 +71,22 @@ class FacadeExtractionAgent(dspy.Module):
     """Fixed-stage tool agent: evidence jobs, not an unbounded model-controlled loop."""
     signature=CatalogueSignature
 
-    def __init__(self,out='runs',budget_usd=None,reserve_usd=.5,cli_budget_usd=.15,model='claude-sonnet-5-5',
+    def __init__(self,out='runs',budget_usd=None,reserve_usd=.5,cli_budget_usd=.15,model=None,
                  command=None,accept_cli_estimates=False,reuse=None,replay=False,pilot_pages=None,compare=None,
-                 index_only=False,backend_factory=None):
+                 index_only=False,backend_factory=None,profile=False,backend=None):
         super().__init__()
         load_dotenv(Path(__file__).resolve().parents[1]/'.env', override=False)
+        self.model_config=resolve_model(backend,model)
         self.out=Path(out);self.cap=budget_usd;self.reserve=reserve_usd;self.cli_cap=cli_budget_usd
-        self.model=model;self.command=command;self.accept=accept_cli_estimates;self.reuse=reuse
+        self.model=self.model_config.model;self.command=command;self.accept=accept_cli_estimates;self.reuse=reuse
         self.replay=replay;self.pilot_pages=pilot_pages;self.compare=compare or [];self.index_only=index_only
-        self.backend_factory=backend_factory;self.backend=None;self.queue=None;self.run=None
-        self.inspect_document=dspy.Tool(self._read_identity,name='claude_code_inspect_document',desc='Read the PDF cover and notice images to propose manufacturer, system and edition identity.')
-        self.claude_code=dspy.Tool(self._read_visual,name='claude_code_read_region',desc='Read the registered PDF region with Claude Code and return schema-validated proposals.')
-        self.review_source=dspy.Tool(self._review_visual,name='claude_code_verify_region',desc='Compare a proposed region against its source image; report questions/errors, never engineering approval.')
+        self.backend_factory=backend_factory or make_backend_factory(self.model_config,command,cli_budget_usd,accept_cli_estimates)
+        self.backend=None;self.queue=None;self.run=None
+        self.profiling=PipelineProfiler(self.out,profile,'index_only' if index_only else 'replay' if replay else 'full')
+        self.inspect_document=dspy.Tool(self._read_identity,name='inspect_document',desc='Read the PDF cover and notice images to propose manufacturer, system and edition identity.')
+        self.read_region=dspy.Tool(self._read_visual,name='read_region',desc='Read the registered PDF region with the selected visual backend and return schema-validated proposals.')
+        self.claude_code=self.read_region # Preserve the original public Python attribute.
+        self.review_source=dspy.Tool(self._review_visual,name='verify_region',desc='Compare a proposed region against its source image; report questions/errors, never engineering approval.')
 
     def _heartbeat(self):
         active=self.queue.db.execute("SELECT id,active_attempt FROM jobs WHERE status='running'").fetchall()
@@ -89,29 +95,31 @@ class FacadeExtractionAgent(dspy.Module):
     def _read_visual(self,unit_id:str)->dict:
         """Read one registered region, with full source context and isolated read-only tools."""
         unit=next(u for u in self.units if u['unit_id']==unit_id)
-        folder=self.run/'tool_inputs'/objecthash(unit_id)[:20];prepare_images(self.run,unit,folder)
+        folder=self.run/'tool_inputs'/objecthash(unit_id)[:20];self.profiling.call('image_preparation',prepare_images,self.run,unit,folder)
         prompt=READING_RULES+'\nUNIT: '+json.dumps(unit)+'\nDOCUMENT: '+json.dumps(self.identity,ensure_ascii=False)
         reply=self.backend.execute('extraction',prompt,VisualResult.model_json_schema(),folder,self._heartbeat)
-        visual=VisualResult.model_validate(reply['output'])
+        visual=self.profiling.call('response_schema_validation',VisualResult.model_validate,reply['output'])
         if visual.unit_id!=unit_id:raise ValueError('Response belongs to a different region')
-        value,repairs=normalize(visual.extraction.model_dump())
+        value,repairs=self.profiling.call('normalization',normalize,visual.extraction.model_dump())
         # A drawing number can be retained as a drawing reference, never a component identity.
         for node in value['nodes']:
             if node['article_id'] and re.fullmatch(r'(?:K\d{7}|geff[fpc]\d+)',node['article_id'],re.I):
                 code=node['article_id'];node['article_id']=None;node['kind']='drawing_reference'
                 repairs['notes'].append('Drawing reference '+code+' removed from article field; original reply retained.')
                 next(d for d in value['details'] if d['id']==node['detail_id'])['drawing_refs'].append(code)
-        value=validate(value,unit['pdf_page'])
+        value=self.profiling.call('structural_validation',validate,value,unit['pdf_page'])
         for span in visual.source_text:
             a,b,c,d=span.bbox
             if not 0<=a<=c<=1 or not 0<=b<=d<=1:raise ValueError('Invalid transcription locator')
         return dict(unit=unit,extraction=value,source_text=[s.model_dump() for s in visual.source_text],
             metadata=dict(source_sha256=self.source['source_sha256'],identity=self.identity,review_status='proposed',
+                method='OpenCode/OpenAI visual reading' if self.model_config.backend=='opencode' else 'Claude Code visual reading',
+                backend=self.model_config.backend,model=self.model,
                 representation_repairs=repairs,tool_receipt=reply,bbox_precision='approximate full-page evidence locator; not CAD geometry'))
 
     def _review_visual(self,unit_id:str)->dict:
         unit=next(u for u in self.units if u['unit_id']==unit_id);record=read(result_path(self.run,unit))
-        folder=self.run/'review_inputs'/objecthash(unit_id)[:20];prepare_images(self.run,unit,folder)
+        folder=self.run/'review_inputs'/objecthash(unit_id)[:20];self.profiling.call('image_preparation',prepare_images,self.run,unit,folder)
         dump(folder/'proposal.json',record['extraction'])
         prompt=READING_RULES+'''\nThis is a selected-source verification pass. Read proposal.json and the source images.
 Check unit assumptions, row/header alignment, part/callout identity, drawing-reference namespaces,
@@ -150,7 +158,9 @@ UNIT: '''+json.dumps(unit)
             return identity
         jid='document:identity'
         images=[self.run/'images'/f'p{n:04}.png' for n in sorted({1,min(2,self.source['page_count']),self.source['page_count']})]
-        self.queue.register(jid,'document_identity','document',[self.run/'source.json',Path(__file__)]+images,
+        self.queue.register(jid,'document_identity','document',[self.run/'source.json',self.run/'model_selection.json',Path(__file__)]+
+            [Path(__file__).with_name(name) for name in ['model.py','tool_protocol.py','schema.py',
+             'opencode_tool.py' if self.model_config.backend=='opencode' else 'claude_tool.py']]+images,
                             [f'p{n:04}:index' for n in sorted({1,min(2,self.source['page_count']),self.source['page_count']})])
         state=self.queue.db.execute('SELECT status FROM jobs WHERE id=?',(jid,)).fetchone()[0]
         if state=='failed':
@@ -183,7 +193,8 @@ UNIT: '''+json.dumps(unit)
         jid=unit['unit_id']+':extract'
         self.queue.register(jid,'region_extraction',unit['unit_id'],[path,self.run/'index'/f'p{unit["pdf_page"]:04}.json',
             self.run/'identity.json',Path(__file__)]+[Path(__file__).with_name(name) for name in
-            ['schema.py','normalize.py','source.py','claude_tool.py','budget.py','importer.py']],
+            ['schema.py','normalize.py','source.py','claude_tool.py','opencode_tool.py','model.py','tool_protocol.py','budget.py','importer.py']]+
+            ([self.run/'model_selection.json'] if (self.run/'model_selection.json').exists() else []),
             [f'p{unit["pdf_page"]:04}:index'],{'scope':unit})
         return jid
 
@@ -192,43 +203,54 @@ UNIT: '''+json.dumps(unit)
         # Third-party notices must not become fatal native stderr records in Windows PowerShell 5.1.
         with (self.out/'pipeline.log').open('a',encoding='utf-8',buffering=1) as log,redirect_stdout(log),redirect_stderr(log):
             print(datetime.now(timezone.utc).isoformat(),'[pipeline] started',flush=True)
+            outcome='failed';error_type=None
+            self.profiling.start()
             try:
-                run=acquire(pdf_url,self.out)
+                run=self.profiling.call('source_acquisition',acquire,pdf_url,self.out)
                 print('[source] acquired',run,flush=True)
                 # ponytail: one controller per PDF; reuse the durable queue for finer workers if throughput demands it.
                 with exclusive_lock(run/'.agent.lock'):result=self._run_document(run)
                 print('[pipeline] finished:',result.coverage['status'],flush=True)
+                outcome=result.coverage['status']
                 return result
-            except BaseException:
+            except BaseException as exc:
+                error_type=type(exc).__name__
                 traceback.print_exc(file=log)
                 raise
+            finally:
+                self.profiling.finish(outcome,error_type)
 
     def _run_document(self,run):
         self.run=run;self.source=read(self.run/'source.json')
         self.queue=WorkQueue(self.run/'work');self.queue.recover()
         try:
             print('[local_index] started',flush=True)
-            pages=index(self.run,self.queue)
+            pages=self.profiling.call('local_index',index,self.run,self.queue)
             print('[local_index] completed:',len(pages),'pages',flush=True)
-            if self.queue.audit():raise ValueError('Checkpoint inputs/outputs changed; preserve this run and inspect it before resuming')
+            if self.profiling.call('checkpoint_audit',self.queue.audit):raise ValueError('Checkpoint inputs/outputs changed; preserve this run and inspect it before resuming')
             bundle=existing_bundle(self.reuse,self.source['source_sha256']) if self.reuse else None
             if self.replay and not bundle:raise ValueError('Replay requires a matching saved-results folder')
             if not self.replay and not self.index_only:
                 if self.cap is None:raise ValueError('Supply an explicit cumulative --budget-usd; no historic balance is assumed')
+                selection=self.run/'model_selection.json'
+                if selection.exists() and read(selection)!=self.model_config.as_dict():
+                    raise ValueError('Backend/model selection changed; choose a fresh output folder to preserve existing results')
+                if not selection.exists() and list((self.run/'proposals').glob('*.json')):
+                    raise ValueError('Historical proposals have no model selection manifest; choose a fresh output folder')
+                if not selection.exists():dump(selection,self.model_config.as_dict())
                 self.budget=Budget(self.run,self.cap,self.reserve)
-                if self.backend_factory:self.backend=self.backend_factory(self.run,self.budget)
-                else:self.backend=ClaudeCode(self.run,self.budget,self.command,self.model,self.cli_cap,accept_estimates=self.accept)
-            try:self.identity=self._identity(bundle)
+                self.backend=self.backend_factory(self.run,self.budget)
+            try:self.identity=self.profiling.call('document_identity',self._identity,bundle)
             except BudgetStopped:
                 self.identity=Identity(manufacturer_brand=None,legal_manufacturer=None,system_id=None,document_name=None,
                     edition=None,copyright_notice=None,evidence_pages=[],unresolved=['Identity reading is blocked by the authorized budget.']).model_dump()
-                self.units=make_units(self.run,pages);return self._finish('budget_stopped_during_identity')
-            self.units=make_units(self.run,pages,set(bundle[2])|set(bundle[3]) if bundle else ())
+                self.units=self.profiling.call('region_planning',make_units,self.run,pages);return self._finish('budget_stopped_during_identity')
+            self.units=self.profiling.call('region_planning',make_units,self.run,pages,set(bundle[2])|set(bundle[3]) if bundle else ())
             if not (self.run/'identity.json').exists():dump(self.run/'identity.json',self.identity)
             if self.index_only:return self._finish('indexed_only')
             from .importer import import_pages
             for unit in self.units:self._seed(unit)
-            imported=import_pages(self.run,bundle,self.source,self.identity,self.queue,self.units) if bundle else set()
+            imported=self.profiling.call('saved_result_import',import_pages,self.run,bundle,self.source,self.identity,self.queue,self.units) if bundle else set()
             if self.replay:return self._finish('replayed_saved_results_no_model_calls')
             parents={u['parent'] for u in self.units if u['parent']}
             candidates=[u for u in self.units if not u['imported'] and u['unit_id'] not in parents]
@@ -258,7 +280,7 @@ UNIT: '''+json.dumps(unit)
                 else:
                     try:
                         def extract(spec,u=unit):
-                            record=self.claude_code(unit_id=u['unit_id']);target=result_path(self.run,u);dump(target,record)
+                            record=self.profiling.call('region_extraction',self.claude_code,unit_id=u['unit_id']);target=result_path(self.run,u);dump(target,record)
                             receipt=record['metadata']['tool_receipt']
                             outputs=[target]
                             if receipt.get('raw_response'):outputs.append(safe_path(self.run,receipt['raw_response']))
@@ -287,7 +309,7 @@ UNIT: '''+json.dumps(unit)
                         elif review_state in ['failed','stale']:return self._finish('pilot_review_requires_explicit_recovery')
                         else:
                             def check_source(spec):
-                                review=self.review_source(unit_id=unit['unit_id']);dump(target,review)
+                                review=self.profiling.call('source_verification',self.review_source,unit_id=unit['unit_id']);dump(target,review)
                                 receipt=review['tool_receipt']
                                 outputs=[target]
                                 if receipt.get('raw_response'):outputs.append(safe_path(self.run,receipt['raw_response']))
@@ -301,11 +323,11 @@ UNIT: '''+json.dumps(unit)
                         scope='Selected model source checks plus structural validation; not human engineering acceptance'))
             return self._finish('processing_finished_with_coverage_report')
         finally:
-            self.queue.snapshot();self.queue.db.close()
+            self.profiling.call('queue_snapshot',self.queue.snapshot);self.queue.db.close()
 
     def _finish(self,status):
         from .exports import export
         print('[export] generating outputs:',status,flush=True)
         costs=self.budget.summary() if hasattr(self,'budget') else dict(reported_cost_usd=0,model_calls_this_run=0)
-        coverage=export(self.run,self.units if hasattr(self,'units') else [],self.identity if hasattr(self,'identity') else {},status,costs,self.compare)
+        coverage=self.profiling.call('reconciliation_and_exports',export,self.run,self.units if hasattr(self,'units') else [],self.identity if hasattr(self,'identity') else {},status,costs,self.compare)
         return dspy.Prediction(output_directory=str(self.run),coverage=coverage)

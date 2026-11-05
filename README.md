@@ -1,4 +1,4 @@
-# Facade extraction with DSPy and Claude Code
+# Facade extraction with DSPy, Claude Code and OpenCode/OpenAI
 
 **Input:** a PDF URL. **Process:** index → read images → validate → check a pilot → extract remaining regions → reconcile. **Output:** source-linked HTML, JSON, Parquet, CSV and an optional data ZIP.
 
@@ -6,15 +6,125 @@
 
 ## Run
 
-On this workspace, Python dependencies and Claude Code 2.1.318 are installed locally.
+On this workspace, Python dependencies, Claude Code 2.1.318 and OpenCode 1.19.0 are installed locally. Claude Code remains the default backend.
 
 Edit `.env` beside this README (`E:\projects_DomApp\details_ocr_graph\facade_dspy\.env`) and enter your key locally:
 
 ```dotenv
 ANTHROPIC_API_KEY=your_key_here
+# Required only when selecting OpenCode/OpenAI:
+OPENAI_API_KEY=your_openai_key_here
 ```
 
 `FacadeExtractionAgent.__init__` loads this exact project file with `python-dotenv`, including when called from another working directory or Python code. DSPy itself does not automatically load `.env`. Existing process environment values take precedence (`override=False`). The Claude Code adapter checks `ANTHROPIC_API_KEY` and passes the environment to its subprocess; no key is embedded in prompts or code. Bare-mode Claude Code uses this key instead of subscription login. An empty key is sufficient for local indexing/replay, but live model work requires a configured key. Keep `.env` private; Git ignores it. `.env.example` is a shareable blank template. [Claude Code documentation](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode)
+
+## Backend and model configuration
+
+`facade_dspy/model.py` is the single source of truth for supported backends,
+default models, key-variable names, argument definitions and adapter creation.
+Both entry points and programmatic callers use it. No direct OpenAI SDK calls or
+extra DSPy planner model were added.
+
+| Backend | Default model | Required variable |
+|---|---|---|
+| `claude-code` | `claude-sonnet-5-5` | `ANTHROPIC_API_KEY` |
+| `opencode` | `openai/gpt-5.4-mini` | `OPENAI_API_KEY` |
+
+Selection precedence: explicit `--backend` / `--model` (or Python arguments),
+then `FACADE_BACKEND` / `FACADE_MODEL` from the environment and project `.env`,
+then defaults in `model.py`. Process environment values take precedence over
+`.env`. Only the selected backend's key is required for live work. The filled-in
+`.env` was not changed by this integration.
+
+Optional `.env` selection, with no key values shown:
+
+```dotenv
+FACADE_BACKEND=opencode
+FACADE_MODEL=openai/gpt-5.4-mini
+```
+
+Both the regular CLI and `test_pdf_page.py` accept `--backend`, `--model` and
+`--backend-executable`. Existing `--claude-executable` on the regular CLI remains
+supported for Claude Code. A different model must support images and tool calls;
+the OpenCode adapter accepts only `openai/<model>` identifiers. Model/account
+availability is not checked by making an API request.
+
+Example switches to add to a **future authorized live command**:
+
+```powershell
+# Claude Code:
+--backend claude-code --model claude-sonnet-5-5
+# OpenCode using the OpenAI API:
+--backend opencode --model openai/gpt-5.4-mini
+```
+
+For an offline page test, either selection can be added alongside `--index-only`.
+Index-only and replay never instantiate either live backend and do not need keys.
+They do not establish that AI vision extraction works with an operator's account.
+
+The existing `backend_factory(run, budget)` contract is retained. The default
+factory in `model.py` creates the selected adapter; custom factories still work.
+Both adapters feed the same identity, region-reading and source-review tools,
+Pydantic schemas, structural checks, normalization, knowledge graph assembly,
+Polars exports and review HTML. The original Python `agent.claude_code` attribute
+remains an alias of the provider-neutral `agent.read_region` tool. OpenCode results
+record `OpenCode/OpenAI visual reading` in provenance rather than claiming Claude
+read them.
+
+`model_selection.json` binds each live run to its requested backend/model. A
+different selection requires a fresh output folder; no automatic fallback or
+cross-backend overwrite is performed. Adapter request hashes include the model
+and CLI version; OpenCode also has its own backend-tagged cache namespace. As
+with earlier producer changes, preserve historical checkpoints and start fresh
+rather than silently resuming old extraction jobs.
+
+### OpenCode transport and offline verification
+
+The adapter uses OpenCode `>=1.19,<2` and its `run --pure --format json` event
+protocol. Your installed 1.19.0 binary was checked using `--version`, `run --help`
+and isolated `debug config` with a nonfunctional test credential; no model prompt
+was submitted. Native executable discovery handles the npm Windows shim without
+executing `.cmd`, `.bat` or `.ps1` scripts through a shell. On a new machine,
+install `opencode-ai@1.19.0`, or supply its native path through
+`--backend-executable`.
+
+Each invocation gets isolated OpenCode configuration/data/cache/state directories
+under `opencode_runtime/`. Runtime configuration enables only OpenAI, references
+`{env:OPENAI_API_KEY}`, selects the official OpenAI API endpoint, disables sharing,
+external plugins, title generation and automatic compaction, and denies tools
+except reads of the exact registered input files. Project instructions and
+external skill discovery are disabled. Source documents remain untrusted data.
+No automatic provider fallback is configured.
+
+The adapter checks completed `read` events against exact source paths, requires
+a complete terminal step and parses/validates the final JSON against the supplied
+schema before the shared pipeline checks. Plain JSON-looking text or reading a
+different file with the same basename does not satisfy image evidence. Failed
+reads, incomplete replies, errors, stderr and usage remain in `raw_responses/`;
+they are not cached as successful results. Diagnostic secrets are redacted.
+
+OpenCode has **no CLI per-call dollar limit** equivalent to Claude Code's
+`--max-budget-usd`; `--cli-budget-usd` applies only to Claude Code. Both use the
+existing cumulative scheduling reservations and explicit cost-estimate acceptance.
+OpenCode step costs are deduplicated; incomplete usage or an unexplained zero cost
+for a paid generation keeps the full reservation. Token-limit failures can still
+settle known billed usage. Neither backend guarantees a hard billing ceiling;
+CLI-internal retries are outside the adapter's control. Exact full-conversation
+token counts are unavailable before generation. No model work was run as part
+of this integration.
+
+Offline tests use synthetic PDFs and fake CLI processes for both backends. They
+exercise shared vision-stage contracts, pilot review, knowledge graph/data
+outputs, selection guards, caching, missing/wrong source reads, malformed JSON,
+provider errors and usage accounting without external model calls. This does
+not establish live OCR quality or authenticated account compatibility.
+
+Protocol references: [OpenCode CLI](https://opencode.ai/docs/cli/),
+[configuration](https://opencode.ai/docs/config/),
+[OpenCode 1.19.0 image Read implementation](https://github.com/anomalyco/opencode/blob/v1.19.0/packages/opencode/src/tool/read.ts),
+[OpenAI model capabilities](https://developers.openai.com/api/docs/models/gpt-5.4-mini).
+
+## Existing commands
 
 Run from the project folder:
 
@@ -92,6 +202,69 @@ Claude Code does not expose an exact pre-generation token count for its full int
 Region planning starts with two non-overlapping bands per page, retaining full-page context. Table/drawing boundaries are candidates until visually interpreted. Selected model checks do not verify every measurement, material, matrix cell or engineering relationship. A completed region/page means a validated proposal, not engineering approval.
 
 Resume by running the same command and output directory. Completed checkpoints and exact tool requests are reused. Budget refusals can resume under an explicitly increased allowance. Interrupted/invalid generations are not blindly retried. Preserve a run before changing its inputs or producer code; code changes require inspection/new-workspace reuse rather than silently re-extracting historical results.
+
+## Performance profiling (opt-in)
+
+Install the optional profiler in the existing virtual environment:
+
+```powershell
+Set-Location 'E:\projects_DomApp\details_ocr_graph\facade_dspy'
+.\.venv\Scripts\python.exe -m pip install --use-feature=truststore ".[profile]"
+```
+
+Add `--profile` to either the regular CLI or `test_pdf_page.py`. Without this flag,
+no sampling starts and no profile files are created. Programmatic callers can use
+`FacadeExtractionAgent(..., profile=True)`.
+
+Offline profiling of ALUPCO physical page 15 only:
+
+```powershell
+.\.venv\Scripts\python.exe -u -B .\test_pdf_page.py `
+    --pdf '.\data\50SG ALUPCO PDF COMBINED.pdf' `
+    --page 15 --index-only --profile
+```
+
+For a **full run that calls Claude**, use the same command with
+`--page 15 --profile --budget-usd 1.00 --accept-cli-cost-estimates` instead of
+`--page 15 --index-only --profile`. It uses the existing `.env`; profiling does not
+change credentials, budgets, caching, source review or extraction behavior.
+The existing CLI cost limitations still apply.
+
+The printed `profile_report` points to `outputs/profiles/<unique ID>/index.html`
+inside a new test folder. Regular CLI runs use `<--out>/profiles/<unique ID>/`.
+Each invocation gets a separate profile folder, including failed runs. Profiling
+files are kept outside the PDF's hashed results directory and its data-only ZIP.
+Existing results are not overwritten. Since this instrumentation changes producer
+code, use a fresh output folder rather than resuming historical checkpoints.
+
+Reports include sortable stage timings, filterable slow functions, an interactive
+whole-pipeline Pyinstrument call tree, a selectable call tree for each measured
+stage invocation, `summary.json`, `pipeline.json` and `pipeline.pyisession`.
+Use `python -m pyinstrument --load '<path>\pipeline.pyisession' -r html -o '<new path>.html'`
+to render a saved session again without running extraction.
+
+Measured stages cover acquisition, indexing, checkpoint audit, document identity,
+region planning, saved-result import, extraction, image preparation, response schema
+validation, normalization, structural validation, source review, reconciliation /
+knowledge-graph assembly / exports, and queue snapshotting. The last processing
+stage stays combined because it is one function in the existing architecture;
+its call tree exposes the slower nested functions without restructuring it.
+
+Times are **elapsed wall time**, including disk I/O and Claude Code subprocess
+waiting. The profiler cannot inspect subprocess internals or remote Claude/OCR
+execution. Inclusive nested stage times overlap; use exclusive stage totals for
+comparisons. Very short functions may have no samples, although stage timers
+still record them. Profiling adds overhead. Agent initialization, test-page
+isolation, final ZIP creation and report rendering are outside the measured agent
+execution. Unreached stages are explicitly listed rather than reported as zero.
+Offline/index-only reports provide no measurements of live model performance.
+No optimizations are applied by this feature.
+
+Profiling/report-writing errors are logged to `pipeline.log` and do not replace
+an existing pipeline result or exception. Requesting profiling without the
+optional dependency fails early with an installation instruction.
+
+Implementation follows the [Pyinstrument Python API](https://pyinstrument.readthedocs.io/en/latest/reference.html).
 
 ## Tests
 

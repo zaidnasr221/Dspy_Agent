@@ -1,4 +1,4 @@
-"""Cumulative scheduling reservations; Claude Code's reported costs are estimates."""
+"""Cumulative scheduling reservations; CLI-reported costs are estimates."""
 import math
 import uuid
 from .locking import exclusive_lock
@@ -25,7 +25,7 @@ class Budget:
             if spent+held+self.reserve_amount>self.cap:raise BudgetStopped('Next reservation cannot fit the authorized cumulative budget')
             ident=str(uuid.uuid4())
             rows.append(dict(attempt_id=ident,request_hash=request_hash,status='reserved',reserved_usd=self.reserve_amount,
-                preflight=preflight,cost_mode='Claude Code client-side estimate; not a guaranteed provider billing ceiling'))
+                preflight=preflight,cost_mode=preflight.get('backend','Claude Code')+' client-side estimate; not a guaranteed provider billing ceiling'))
             dump(self.path,rows)
         return ident
 

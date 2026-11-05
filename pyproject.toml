@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "facade-dspy"
 version = "0.1.0"
-description = "Evidence-backed PDF extraction with DSPy and a Claude Code vision tool"
+description = "Evidence-backed PDF extraction with DSPy and Claude Code or OpenCode/OpenAI vision tools"
 requires-python = ">=3.11"
-dependencies = ["dspy==3.4.1", "pydantic>=2.11,<3", "polars>=1,<3", "pymupdf>=1.26,<2", "python-dotenv>=1.2,<2"]
+dependencies = ["dspy==3.4.1", "pydantic>=2.11,<3", "polars>=1,<3", "pymupdf>=1.26,<2", "python-dotenv>=1.2,<2", "jsonschema>=4.23,<5"]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<10"]
+test = ["pytest>=8,<10", "pyinstrument>=5.1,<6"]
+profile = ["pyinstrument>=5.1,<6"]
 
 [project.scripts]
 facade-extract = "facade_dspy.cli:main"
