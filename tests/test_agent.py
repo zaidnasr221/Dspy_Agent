@@ -100,6 +100,64 @@ def test_url_to_dspy_tool_checks_and_formats(tmp_path):
         archive=zip_results(run,tmp_path/'data.zip');assert archive.exists()
 
 
+def test_profiling_reports_stages_without_changing_extraction_outputs(tmp_path):
+    """Removing a stage hook or changing return values must break this contract."""
+    pdf=pdf_file(tmp_path/'fixture.pdf')
+    baseline=FacadeExtractionAgent(out=tmp_path/'baseline',budget_usd=10,
+        backend_factory=lambda r,b:FakeBackend([]))(pdf_url=pdf.as_uri())
+    agent=FacadeExtractionAgent(out=tmp_path/'profiled',budget_usd=10,profile=True,
+        backend_factory=lambda r,b:FakeBackend([]))
+    result=agent(pdf_url=pdf.as_uri())
+    assert result.coverage==baseline.coverage
+    for name in ['components','entities','relationships','measurements','table_rows']:
+        assert read(Path(result.output_directory)/'data'/f'{name}.json')==read(Path(baseline.output_directory)/'data'/f'{name}.json')
+    report=agent.profiling.report_path
+    assert report.is_file() and not report.is_relative_to(Path(result.output_directory))
+    summary=read(report.with_name('summary.json'))
+    stages={s['stage'] for s in summary['stages']}
+    assert {'source_acquisition','local_index','document_identity','region_planning','region_extraction',
+            'structural_validation','source_verification','reconciliation_and_exports','queue_snapshot'}<=stages
+    assert summary['outcome']=='processing_finished_with_coverage_report'
+    assert all(s['duration_seconds']>=s['exclusive_seconds']>=0 for s in summary['stages'])
+    assert summary['slow_functions']
+    assert not any(f['function']=='[self]' for f in summary['slow_functions'])
+    assert all((report.parent/s['profile_html']).is_file() for s in summary['stages'])
+    assert (report.parent/'pipeline.html').is_file()
+    assert 'https://fonts.googleapis.com' not in (report.parent/'pipeline.html').read_text(encoding='utf-8')
+    assert (report.parent/'pipeline.pyisession').is_file()
+    assert not (tmp_path/'baseline'/'profiles').exists()
+
+
+def test_failed_local_stage_keeps_profile_and_original_exception(tmp_path,monkeypatch):
+    """A failed indexing attempt must still leave timing/error evidence."""
+    import facade_dspy.program as program
+    pdf=pdf_file(tmp_path/'fixture.pdf')
+    def fail_index(*args):raise RuntimeError('profiling fixture indexing failure')
+    monkeypatch.setattr(program,'index',fail_index)
+    agent=FacadeExtractionAgent(out=tmp_path/'runs',index_only=True,profile=True)
+    with pytest.raises(RuntimeError,match='profiling fixture indexing failure'):
+        agent(pdf_url=pdf.as_uri())
+    summary=read(agent.profiling.report_path.with_name('summary.json'))
+    assert summary['outcome']=='failed' and summary['error_type']=='RuntimeError'
+    failed=next(s for s in summary['stages'] if s['stage']=='local_index')
+    assert failed['status']=='failed' and failed['error_type']=='RuntimeError'
+    assert agent.profiling.report_path.is_file()
+    assert 'profiling fixture indexing failure' in (tmp_path/'runs'/'pipeline.log').read_text(encoding='utf-8')
+
+
+def test_profile_report_failure_does_not_fail_pipeline(tmp_path,monkeypatch):
+    """A disk/renderer failure must not turn successful indexing into a pipeline error."""
+    from facade_dspy.profiling import PipelineProfiler
+    pdf=pdf_file(tmp_path/'fixture.pdf',pages=1)
+    def fail_report(*args):raise OSError('profiling fixture report write failure')
+    monkeypatch.setattr(PipelineProfiler,'_write_report',fail_report)
+    agent=FacadeExtractionAgent(out=tmp_path/'runs',index_only=True,profile=True)
+    result=agent(pdf_url=pdf.as_uri())
+    assert result.coverage['status']=='indexed_only'
+    assert agent.profiling.report_path is None
+    assert 'profiling fixture report write failure' in (tmp_path/'runs'/'pipeline.log').read_text(encoding='utf-8')
+
+
 def test_project_dotenv_loads_without_overriding_environment(tmp_path,monkeypatch):
     import facade_dspy.program as program
     project=tmp_path/'project';project.mkdir()
@@ -336,12 +394,13 @@ def test_single_page_runner_local_scope_and_error_logs(tmp_path):
     script=Path(__file__).parents[1]/'test_pdf_page.py'
     for number,success in [(2,True),(3,False)]:
         result=subprocess.run([sys.executable,'-u','-B',str(script),'--pdf',str(pdf),'--page',str(number),
-            '--out',str(tmp_path/'isolated'),'--index-only'],capture_output=True,text=True,encoding='utf-8',timeout=50)
+            '--out',str(tmp_path/'isolated'),'--index-only','--profile'],capture_output=True,text=True,encoding='utf-8',timeout=50)
         assert result.stderr==''
         summary=json.loads(result.stdout);folder=Path(summary['test_folder'])
         assert (result.returncode==0)==success
         if success:
             run=Path(summary['output_directory'])
+            assert Path(summary['profile_report']).is_file()
             assert summary['coverage']['indexed_pages']==1
             with pymupdf.open(run/'source.pdf') as doc:assert len(doc)==1
             assert read(run/'original_page_provenance.json')['original_pdf_page']==2

@@ -8,10 +8,8 @@ import subprocess
 import time
 import uuid
 from .storage import dump,read,filehash,objecthash
-
-
-class ToolFailure(RuntimeError):pass
-class IncompleteRead(ToolFailure):pass
+from .model import DEFAULT_MODELS
+from .tool_protocol import ToolFailure,IncompleteRead,redact
 
 
 def decode_events(text):
@@ -32,11 +30,11 @@ def decode_events(text):
 
 
 class ClaudeCode:
-    def __init__(self,run,budget,command=None,model='claude-sonnet-5-5',cli_budget=.15,timeout=240,accept_estimates=False):
+    def __init__(self,run,budget,command=None,model=None,cli_budget=.15,timeout=240,accept_estimates=False):
         if not accept_estimates:raise ValueError('Live Claude Code requires explicit acceptance of estimated CLI cost controls')
         if not 0<cli_budget<budget.reserve_amount:raise ValueError('CLI stop threshold must be below the reserved headroom')
         if not os.environ.get('ANTHROPIC_API_KEY'):raise ValueError('Claude Code bare mode requires a fresh locally configured ANTHROPIC_API_KEY; subscription login is not used in this mode')
-        self.run=run;self.budget=budget;self.model=model;self.cli_budget=cli_budget;self.timeout=timeout
+        self.run=run;self.budget=budget;self.model=model or DEFAULT_MODELS['claude-code'];self.cli_budget=cli_budget;self.timeout=timeout
         local=Path(__file__).parents[1]/'.local_setup/claude/node_modules/@anthropic-ai/claude-code/bin'/('claude.exe' if os.name=='nt' else 'claude')
         found=shutil.which('claude')
         self.command=command or ([str(local)] if local.exists() else [found] if found else None)
@@ -103,7 +101,6 @@ class ClaudeCode:
         finally:
             if proc and proc.poll() is None:proc.kill();stdout,stderr=proc.communicate()
             # Preserve incomplete replies before any parsing; redact token-like secrets in diagnostic text.
-            redact=lambda s:re.sub(r'sk-ant-[A-Za-z0-9_-]{20,}','[REDACTED]',s)
             raw.write_text(redact(stdout),encoding='utf-8');stderr_path.write_text(redact(stderr),encoding='utf-8')
             result,successful_reads,events=decode_events(stdout)
             if result:self.budget.settle(attempt,result)
