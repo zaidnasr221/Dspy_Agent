@@ -281,6 +281,58 @@ optional dependency fails early with an installation instruction.
 
 Implementation follows the [Pyinstrument Python API](https://pyinstrument.readthedocs.io/en/latest/reference.html).
 
+## Offline accuracy benchmark
+
+Evaluate saved proposals against independently reviewed ground truth. Each case
+labels one complete region. Copy its source hash, physical PDF page, unit ID and
+normalized bounds from the evidence, then label the expected records using the
+existing `PageResult` schema. Keep the ground truth separate from the predictions.
+
+This example shows the manifest format for an intentionally empty region.
+Replace the placeholder hash and reviewer with the actual values.
+
+```json
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "catalogue-page-1-top",
+      "reviewed_by": "Reviewer name",
+      "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "unit_id": "p0001:top",
+      "bbox": [0, 0, 1, 0.5],
+      "expected": {
+        "pdf_page": 1, "page_kind": "detail", "details": [], "nodes": [],
+        "relations": [], "measurements": [], "tables": [], "instructions": [],
+        "unresolved": []
+      }
+    }
+  ]
+}
+```
+
+```powershell
+.\.venv\Scripts\python.exe -B -m facade_dspy.benchmark `
+    --ground-truth '.\ground_truth.json' --predictions '.\path\to\run'
+```
+
+`--predictions` also accepts a snapshot directory or a saved
+`data/all_proposals.json` file. Repeat it for multiple catalogues. The scorer
+reads local JSON and prints a JSON report. It matches cases by PDF hash, page,
+unit ID and bounds. Missing predictions contribute misses. Unlabeled regions
+are counted separately. Duplicate labels or predictions are rejected.
+
+The report gives precision, recall, F1 and the underlying counts by case and
+pooled by metric. It scores literal article observations, dimension values,
+known measurement units, table headers and units, cell contents in position,
+and directed relationships with their conditions and evidence basis. Matches
+are exact, with multiplicity preserved. Model-local node IDs may differ.
+Article and callout identify linked occurrences for scoring, so repeated
+occurrences with the same pair are indistinguishable. The scorer applies no
+numeric tolerance or unit conversion. Metrics with no observations on either
+side have a null F1. Synthetic regression fixtures establish scoring behavior.
+Real catalogue accuracy requires separately reviewed labels.
+
 ## Tests
 
 ```powershell
