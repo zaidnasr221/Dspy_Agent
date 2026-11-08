@@ -34,10 +34,16 @@ def literal_article(value,kind):
     return bool(re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{2,24}|\d{3}[ \u00a0]?\d{3}',value) or re.fullmatch(r'\d{4}',value) and any(x in kind.casefold() for x in ['tool','jig']))
 
 
+def canonical_id(kind, *scope):
+    """Build deterministic typed keys from separate scope segments."""
+    return kind + ':' + objecthash([kind, *scope])
+
+
 def export(run,units,identity,status,costs,compare):
     source=read(run/'source.json');docid='pdf:'+source['source_sha256'];brand=identity.get('manufacturer_brand');system=identity.get('system_id')
     namespace=(brand.casefold()+':'+system.casefold()) if brand and system else docid+':unresolved_identity'
-    registry=defaultdict(list);entities=[];details=[];relations=[];measurements=[];rows=[];instructions=[];questions=[];transcription=[];crops=[];records={};crop_plans=[]
+    component_scope = ('system', brand.casefold(), system.casefold()) if brand and system else ('document', docid)
+    registry=defaultdict(list);entities=[];details=[];relations=[];measurements=[];tables=[];rows=[];instructions=[];questions=[];transcription=[];crops=[];records={};crop_plans=[]
     for path in sorted((run/'proposals').glob('*.json')):
         record=read(path);unit=record['unit'];uid=unit['unit_id'];n=unit['pdf_page']
         if record.get('metadata',{}).get('source_sha256')!=source['source_sha256']:raise ValueError('Proposal belongs to a different source PDF')
@@ -48,35 +54,50 @@ def export(run,units,identity,status,costs,compare):
             source_sha256=source['source_sha256'],pdf_page=n,printed_page=index['printed_page'],region_id=uid,bbox=box,
             source_image=f'images/p{n:04}.png',reading_method=record['metadata'].get('method','Claude Code visual reading'),review_status='proposed')
         def scoped(local):return docid+':'+uid+':'+local
+        def key(kind, *local):return canonical_id(kind, docid, uid, *local)
+        detail_keys = {d['id']: key('detail', d['id']) for d in value['details']}
+        entity_keys = {node['id']: key('entity', node['id']) for node in value['nodes']}
         for d in value['details']:
-            details.append(dict(**d,detail_id=scoped(d['id']),record_class='synthetic_review_bucket' if 'review bucket' in d['title'].casefold() else 'source_detail',provenance=provenance(d['bbox'])))
+            details.append(dict(**d,detail_id=scoped(d['id']),canonical_id=detail_keys[d['id']],record_class='synthetic_review_bucket' if 'review bucket' in d['title'].casefold() else 'source_detail',provenance=provenance(d['bbox'])))
         node_map={v['id']:v for v in value['nodes']}
         for node in value['nodes']:
             kind=node['kind'].casefold();article=node['article_id'];valid=literal_article(article,kind)
             category='tool' if any(s in kind for s in ['tool','jig']) else 'consumable' if any(s in kind for s in ['consumable','sealant','adhesive']) else 'fastener' if any(s in kind for s in ['screw','bolt','fastener']) else 'profile' if any(s in kind for s in ['mullion','transom','profile']) else 'unknown'
             cls='drawing_reference' if kind=='drawing_reference' else 'connection' if kind in ['connection','joint','assembly_connection'] else 'machining_feature' if not article and any(s in kind for s in ['hole','feature','machining','pattern']) else 'unresolved_reference' if 'unresolved' in kind else 'component_definition_reference' if 'definition' in kind or valid and 'reference' in kind else 'drawing_instance'
             e=dict(**node,entity_id=scoped(node['id']),entity_class=cls,component_category=category,component_id=namespace+':'+article if valid else None,
+                canonical_id=entity_keys[node['id']],canonical_detail_id=detail_keys[node['detail_id']],
+                canonical_component_id=canonical_id('component', *component_scope, article) if valid else None,
                 quantity_scope='observed illustration occurrence, not required installed quantity',provenance=provenance(node['bbox']))
             entities.append(e)
-            if valid:registry[article].append(dict(kind=node['kind'],label=node['label'],material=node['material'],provenance=e['provenance']))
+            if valid:registry[article].append(dict(kind=node['kind'],label=node['label'],material=node['material'],canonical_entity_id=e['canonical_id'],provenance=e['provenance']))
             elif article:questions.append(dict(category='unresolved_article_label',message=article,provenance=e['provenance']))
-        for r in value['relations']:
+        for i,r in enumerate(value['relations']):
             relations.append(dict(**r,source_node=scoped(r['source']),target_node=scoped(r['target']),
+                canonical_id=key('relationship',i),canonical_source_id=entity_keys[r['source']],canonical_target_id=entity_keys[r['target']],
                 source_article_id=node_map[r['source']]['article_id'],target_article_id=node_map[r['target']]['article_id'],provenance=provenance(r['bbox'])))
-        for m in value['measurements']:
+        for i,m in enumerate(value['measurements']):
             item=dict(m)
             if item['unit'] in ['','unknown','(none)']:item['unit']=None
-            measurements.append(dict(**item,provenance=provenance(m['bbox'])))
+            # Match the legacy full-page merge's node-first resolution of shared local IDs.
+            subject = m['subject']
+            subject_id = entity_keys[subject] if subject in entity_keys else detail_keys[subject]
+            measurements.append(dict(**item,canonical_id=key('measurement',i),canonical_subject_id=subject_id,provenance=provenance(m['bbox'])))
         for t in value['tables']:
+            table_key = key('table',t['id'])
+            tables.append(dict(id=t['id'],canonical_id=table_key,title=t['title'],columns=t['columns'],
+                units=t['units'],footnotes=t['footnotes'],provenance=provenance(t['bbox'])))
             for i,row in enumerate(t['rows'],1):
                 rows.append(dict(table_id=scoped(t['id']),row_number=i,title=t['title'],headers=t['columns'],units=[None if u in ['', 'unknown','(none)'] else u for u in t['units']],
+                    canonical_id=key('table_row',t['id'],i),canonical_table_id=table_key,original_table_id=t['id'],
                     cells=row['cells'],footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
                 for col,cell in zip(t['columns'],row['cells']):
                     if cell and re.search(r'Art\.?[- ]?(?:Nr|No)|article|reference',col,re.I) and not re.search('drawing',col,re.I):
                         for ref in re.findall(r'\b(?:[A-Z]{1,4}\d{3,5}|\d{3}[ \u00a0]?\d{3})\b',cell):
                             if literal_article(ref,'table_reference'):registry[ref].append(dict(kind='table_reference',label=' | '.join(c or 'Unknown' for c in row['cells']),material=None,
                                 headers=t['columns'],units=t['units'],footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
-        instructions.extend(dict(**i,provenance=provenance(i['bbox'])) for i in value['instructions'])
+        instructions.extend(dict(**instruction,canonical_id=key('instruction',i),
+            canonical_detail_id=detail_keys[instruction['detail_id']],provenance=provenance(instruction['bbox']))
+            for i,instruction in enumerate(value['instructions']))
         questions.extend(dict(category='source_or_model_question',message=q,provenance=provenance(unit['bbox'])) for q in value['unresolved'])
         transcription.extend(dict(**s,provenance=provenance(s['bbox'])) for s in record.get('source_text',[]))
         for i,item in enumerate(value['tables']+value['details']):
@@ -88,7 +109,8 @@ def export(run,units,identity,status,costs,compare):
             clip=pymupdf.Rect(box[0]*w,box[1]*h,box[2]*w,box[3]*h);scale=1800/max(clip.width,clip.height)
             page.get_pixmap(matrix=pymupdf.Matrix(scale,scale),clip=clip,alpha=False).save(plan['target'])
             crops.append(dict(title=plan['title'],image='crops/'+plan['target'].name,provenance=plan['provenance']))
-    components=[dict(component_id=namespace+':'+a,article_id=a,manufacturer_brand=brand,system_id=system,observations=obs,review_status='proposed') for a,obs in sorted(registry.items())]
+    components=[dict(component_id=namespace+':'+a,canonical_id=canonical_id('component', *component_scope,a),
+        article_id=a,manufacturer_brand=brand,system_id=system,observations=obs,review_status='proposed') for a,obs in sorted(registry.items())]
     conflicts=[]
     for c in components:
         materials=sorted({o['material'].casefold().strip() for o in c['observations'] if o.get('material')})
@@ -127,7 +149,7 @@ def export(run,units,identity,status,costs,compare):
         review=read(path)
         for finding in review['findings']:questions.append(dict(category='model_source_check',unit_id=review['unit_id'],**finding,status='unresolved; not human approval'))
     collections=dict(components=components,entities=entities,details=details,relationships=relations,measurements=measurements,
-        table_rows=rows,instructions=instructions,questions=questions,conflicts=conflicts,cross_document_links=cross,cross_document_comparison=comparisons,
+        tables=tables,table_rows=rows,instructions=instructions,questions=questions,conflicts=conflicts,cross_document_links=cross,cross_document_comparison=comparisons,
         source_text=transcription,source_crops=crops,reference_index=read(run/'reference_index.json'))
     for name,predicate in [('drawing_instances',lambda e:e['entity_class']=='drawing_instance'),('connections',lambda e:e['entity_class']=='connection'),
                            ('machining_features',lambda e:e['entity_class']=='machining_feature'),('tools',lambda e:e['component_category']=='tool'),

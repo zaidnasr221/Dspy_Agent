@@ -181,6 +181,13 @@ All active descriptions/reports are English. Verbatim native/OCR evidence can re
 
 ## Output files
 
+Analytical exports include typed `canonical_id` keys and `canonical_*` foreign
+keys for graph joins. Source IDs and legacy columns are retained. Entity and
+detail keys are scoped to the document and region, while component keys are
+scoped to the manufacturer/system or to the document if identity is unresolved.
+Measurements resolve shared local IDs as entity first, matching the legacy
+page merger. Canonical keys identify records within their source scope.
+
 | Location | Contents |
 |---|---|
 | `runs/<PDF hash>/review.html` | Searchable review with source drawings/table crops |
