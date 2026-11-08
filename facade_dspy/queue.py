@@ -221,6 +221,28 @@ class WorkQueue:
                 self.event(job_id, 'failed', err, attempt)
             raise
 
+    def committed_json(self, job_id, path):
+        """Read the exact artifact covered by the latest successful commit."""
+        row = self.db.execute("""
+            SELECT j.spec, a.id AS attempt_id, a.checkpoint
+            FROM jobs j JOIN attempts a ON a.job_id=j.id
+            WHERE j.id=? AND j.status='completed' AND a.status='completed'
+            ORDER BY a.ordinal DESC LIMIT 1
+        """, (job_id,)).fetchone()
+        if row is None:
+            return None
+        receipt = json.loads(self.path(row['checkpoint']).read_text(encoding='utf-8'))
+        if (receipt['job_id'] != job_id or receipt['attempt_id'] != row['attempt_id']
+                or receipt['spec'] != json.loads(row['spec'])):
+            raise ValueError(f'Checkpoint identity changed for {job_id}')
+        expected = receipt['outputs'].get(self.ref(path))
+        if expected is None:
+            raise ValueError(f'Committed job {job_id} does not cover {path.name}')
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != expected:
+            raise ValueError(f'Committed output changed for {job_id}')
+        return json.loads(content)
+
     def audit(self):
         changed = []
         for job in self.db.execute("SELECT * FROM jobs WHERE status IN ('completed','needs_review')").fetchall():

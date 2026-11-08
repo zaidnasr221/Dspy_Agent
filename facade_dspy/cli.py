@@ -9,16 +9,22 @@ import sys
 from .program import FacadeExtractionAgent
 from .storage import filehash
 from .model import add_model_arguments
+from .publication import published_directory
 
 
-def zip_results(run,destination):
+def zip_results(run,destination,snapshot=None):
     destination=Path(destination).resolve();destination.parent.mkdir(parents=True,exist_ok=True)
     if destination.exists():raise FileExistsError('Choose a new results ZIP path')
-    entries=[p for p in run.rglob('*') if p.is_file() and p.resolve()!=destination and
+    published=Path(snapshot).resolve() if snapshot is not None else published_directory(run)
+    entries=[p for p in published.rglob('*') if p.is_file() and p.resolve()!=destination and
              p.suffix in ['.pdf','.png','.json','.jsonl','.parquet','.csv','.html','.txt','.log']]
-    manifest={str(p.relative_to(run)).replace('\\','/'):filehash(p) for p in entries}
+    files={p.relative_to(published).as_posix():p for p in entries}
+    if published!=run.resolve():
+        for name in ('pipeline.log','original_page_provenance.json'):
+            if (run/name).is_file():files[name]=run/name
+    manifest={name:filehash(p) for name,p in files.items()}
     with zipfile.ZipFile(destination,'w',zipfile.ZIP_DEFLATED) as z:
-        for p in entries:z.write(p,str(p.relative_to(run)))
+        for name,p in files.items():z.write(p,name)
         z.writestr('FILE_MANIFEST.json',json.dumps(manifest,indent=2))
         z.writestr('READ_FIRST.txt','Open review.html. Data formats are in data/. All records are proposals requiring engineering review. Read coverage.json, cost_summary.json, reviews/ and failed work attempts before use. Raw image/transcription/model responses are evidence, not engineering approval.\n')
     with zipfile.ZipFile(destination) as z:
@@ -58,9 +64,9 @@ def main():
         compare=args.compare,index_only=args.index_only,profile=args.profile)
     try:
         with redirect_stdout(sys.stderr):result=program(pdf_url=url)
-        output=dict(output_directory=result.output_directory,coverage=result.coverage)
+        output=dict(output_directory=result.output_directory,snapshot_directory=result.snapshot_directory,coverage=result.coverage)
         if program.profiling.report_path:output['profile_report']=str(program.profiling.report_path)
-        if args.export_zip:output['results_zip']=str(zip_results(Path(result.output_directory),args.export_zip))
+        if args.export_zip:output['results_zip']=str(zip_results(Path(result.output_directory),args.export_zip,result.snapshot_directory))
         print(json.dumps(output,ensure_ascii=False,indent=2))
     except Exception as exc:
         parser.exit(2,type(exc).__name__+': '+str(exc)+'\n')

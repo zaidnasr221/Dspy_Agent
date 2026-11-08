@@ -18,6 +18,7 @@ from .tool_protocol import IncompleteRead
 from .model import resolve_model,make_backend_factory
 from .locking import exclusive_lock
 from .profiling import PipelineProfiler
+from .publication import publish,published_directory
 
 READING_RULES='''Read source.png and focus.png with the Read tool; native.txt is only a search aid.
 The focus image is a crop of the box in scope.json. Extract only entities whose source belongs
@@ -55,6 +56,7 @@ def result_path(run,unit):return run/'proposals'/(objecthash(unit['unit_id'])[:2
 def existing_bundle(folder,source_sha):
     folder=Path(folder).resolve()
     if (folder/'outputs/document.json').exists():folder=folder/'outputs'
+    folder=published_directory(folder)
     doc=read(folder/'document.json')
     if doc.get('sha256',doc.get('source_sha256'))!=source_sha:raise ValueError('Saved results belong to a different source PDF')
     result={}
@@ -326,8 +328,7 @@ UNIT: '''+json.dumps(unit)
             self.profiling.call('queue_snapshot',self.queue.snapshot);self.queue.db.close()
 
     def _finish(self,status):
-        from .exports import export
         print('[export] generating outputs:',status,flush=True)
         costs=self.budget.summary() if hasattr(self,'budget') else dict(reported_cost_usd=0,model_calls_this_run=0)
-        coverage=self.profiling.call('reconciliation_and_exports',export,self.run,self.units if hasattr(self,'units') else [],self.identity if hasattr(self,'identity') else {},status,costs,self.compare)
-        return dspy.Prediction(output_directory=str(self.run),coverage=coverage)
+        coverage,snapshot=self.profiling.call('reconciliation_and_exports',publish,self.run,self.queue,self.units,self.identity,status,costs,self.compare)
+        return dspy.Prediction(output_directory=str(self.run),snapshot_directory=str(snapshot),coverage=coverage)

@@ -188,6 +188,14 @@ scoped to the manufacturer/system or to the document if identity is unresolved.
 Measurements resolve shared local IDs as entity first, matching the legacy
 page merger. Canonical keys identify records within their source scope.
 
+Each successful export publishes a complete generation under `snapshots/`
+and atomically advances `publication.json`. Use the printed
+`snapshot_directory` for a stable view. Only queue-committed proposals and
+reviews enter a generation. Replay, comparison and ZIP export pin that
+generation, with support for historical bundles. Root-level report and data
+paths are compatibility copies. Failed and unpublished evidence remains in
+the run workspace for diagnosis. Snapshots are retained for audit.
+
 | Location | Contents |
 |---|---|
 | `runs/<PDF hash>/review.html` | Searchable review with source drawings/table crops |

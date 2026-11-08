@@ -8,6 +8,7 @@ import polars as pl
 import pymupdf
 from .storage import read,dump,objecthash
 from .schema import validate
+from .publication import published_directory
 
 STYLE='body{font:16px system-ui;line-height:1.5;max-width:1200px;margin:30px auto;padding:18px;color:#24374b}a{color:#006599}table{border-collapse:collapse;width:100%}td,th{padding:9px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}.scroll{overflow:auto}img{max-width:100%;height:auto}input{padding:12px;width:90%}.notice{padding:16px;background:#fff2cc}pre{white-space:pre-wrap;overflow-wrap:anywhere}'
 
@@ -119,6 +120,7 @@ def export(run,units,identity,status,costs,compare):
     for directory in compare:
         base=Path(directory)
         if (base/'outputs/document.json').exists():base=base/'outputs'
+        base=published_directory(base)
         doc=read(base/'document.json')
         oldpath=base/'components.json'
         if not oldpath.exists():oldpath=base/'full/component_registry_reviewed.json'
