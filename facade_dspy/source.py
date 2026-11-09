@@ -108,6 +108,15 @@ def index(run,queue):
     return pages
 
 
+def band_split(tables,low=.3,high=.7):
+    """Midline unless it crosses a detected table; then the nearest table edge inside [low, high]."""
+    spans=[(t['bbox'][1],t['bbox'][3]) for t in tables if isinstance(t,dict) and len(t.get('bbox') or [])==4]
+    inside=lambda y:any(a<y<b for a,b in spans)
+    if not inside(.5):return .5
+    edges=sorted({round(y,4) for a,b in spans for y in (a,b) if low<=y<=high and not inside(y)},key=lambda y:abs(y-.5))
+    return edges[0] if edges else .5
+
+
 def make_units(run,pages,imported_pages=()):
     path=run/'units.json'
     if path.exists():
@@ -122,7 +131,8 @@ def make_units(run,pages,imported_pages=()):
             units.append(dict(unit_id=f'p{n:04}:page',pdf_page=n,bbox=[0,0,1,1],depth=0,parent=None,imported=True));continue
         # ponytail: two non-overlapping bands, with full-page/header context supplied to the reader.
         # More precise regions can replace this planner without changing the queue/data contracts.
-        for label,bbox in [('top',[0,0,1,.5]),('bottom',[0,.5,1,1])]:
+        cut=band_split(p.get('table_candidates') or [])
+        for label,bbox in [('top',[0,0,1,cut]),('bottom',[0,cut,1,1])]:
             units.append(dict(unit_id=f'p{n:04}:{label}',pdf_page=n,bbox=bbox,depth=0,parent=None,imported=False))
     dump(path,units);return units
 
@@ -140,7 +150,9 @@ def prepare_images(run,unit,folder):
     with pymupdf.open(run/'source.pdf') as pdf:
         page=pdf[n-1];w,h=page.rect.width,page.rect.height;b=unit['bbox']
         clip=pymupdf.Rect(b[0]*w,b[1]*h,b[2]*w,b[3]*h)
-        page.get_pixmap(matrix=pymupdf.Matrix(2200/max(w,h),2200/max(w,h)),clip=clip,alpha=False).save(folder/'focus.png')
+        # Zoom the crop itself (longest side ~2200 px) so small callouts gain resolution; never below full-page scale.
+        scale=max(2200/max(w,h),min(2200/max(clip.width,clip.height,1e-6),4*2200/max(w,h)))
+        page.get_pixmap(matrix=pymupdf.Matrix(scale,scale),clip=clip,alpha=False).save(folder/'focus.png')
     record=read(run/'index'/f'p{n:04}.json')
     (folder/'native.txt').write_text(record['native_text'],encoding='utf-8')
     dump(folder/'scope.json',unit)

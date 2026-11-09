@@ -1,0 +1,13 @@
+{
+  "id": "alupco",
+  "description": "ALUPCO (Aluminium Products Company). Articles print as '235 918' or '235918', with size variants such as '235 918-11.5'. Add confirmed system names to system_aliases as catalogues are reviewed.",
+  "brand_aliases": [
+    "ALUPCO",
+    "Alupco LLC",
+    "Aluminium Products Company",
+    "Aluminum Products Company"
+  ],
+  "system_aliases": {"50 SG": ["50SG"]},
+  "article_requires_digit": true,
+  "article_key_ignore_digit_group_spaces": true
+}

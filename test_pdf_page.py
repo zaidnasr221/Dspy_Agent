@@ -49,8 +49,8 @@ def main():
             result=agent(pdf_url=subset.as_uri());run=Path(result.output_directory)
             (run/'original_page_provenance.json').write_text(json.dumps(provenance,indent=2),encoding='utf-8')
             shutil.copy2(test/'outputs/pipeline.log',run/'pipeline.log')
-            archive=zip_results(run,test/'results.zip')
-            summary.update(output_directory=str(run),coverage=result.coverage,results_zip=str(archive))
+            archive=zip_results(run,test/'results.zip',result.snapshot_directory)
+            summary.update(output_directory=str(run),snapshot_directory=result.snapshot_directory,coverage=result.coverage,results_zip=str(archive))
             if args.index_only:
                 if result.coverage['status']!='indexed_only':raise RuntimeError('Local indexing did not finish')
             else:

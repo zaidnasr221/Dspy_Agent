@@ -4,19 +4,63 @@
 
 `FacadeExtractionAgent` is a real `dspy.Module` with three `dspy.Tool` calls: inspect document identity, read a region, and check a proposed region against its source. Local code selects jobs and enforces checks. It does not need another model to plan the workflow. No DSPy optimizer or training run is included.
 
-## Run
+## Quick start with OpenCode and OpenAI
 
-On this workspace, Python dependencies, Claude Code 2.1.318 and OpenCode 1.19.0 are installed locally. Claude Code remains the default backend.
+OpenCode is the default backend and uses `openai/gpt-6.1-sol`. On a new Windows
+checkout, use Python 3.11+ and Node.js with npm, then run the following from
+the project directory.
 
-Edit `.env` beside this README (`E:\projects_DomApp\details_ocr_graph\facade_dspy\.env`) and enter your key locally:
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+npm.cmd install --prefix .local_setup/opencode --no-audit --no-fund opencode-ai@1.19.0
+if (-not (Test-Path -LiteralPath '.env')) { Copy-Item -LiteralPath '.env.example' -Destination '.env' }
+notepad.exe .env
+```
+
+Set `OPENAI_API_KEY` in the project `.env` and save it locally.
 
 ```dotenv
-ANTHROPIC_API_KEY=your_key_here
-# Required only when selecting OpenCode/OpenAI:
 OPENAI_API_KEY=your_openai_key_here
 ```
 
-`FacadeExtractionAgent.__init__` loads this exact project file with `python-dotenv`, including when called from another working directory or Python code. DSPy itself does not automatically load `.env`. Existing process environment values take precedence (`override=False`). The Claude Code adapter checks `ANTHROPIC_API_KEY` and passes the environment to its subprocess; no key is embedded in prompts or code. Bare-mode Claude Code uses this key instead of subscription login. An empty key is sufficient for local indexing/replay, but live model work requires a configured key. Keep `.env` private; Git ignores it. `.env.example` is a shareable blank template. [Claude Code documentation](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode)
+`FacadeExtractionAgent` loads the project `.env` using `python-dotenv` even
+when called from a different working directory. Existing process environment
+values take precedence. If a stale shell value is taking priority, clear it
+with `Remove-Item Env:\OPENAI_API_KEY -ErrorAction SilentlyContinue`.
+OpenCode receives the key through its environment and uses the same model for
+document identity, region extraction and source review. Git ignores `.env`.
+
+Missing or blank credentials and keys containing whitespace fail before
+OpenCode launches. An authentication rejection from OpenAI during a live run
+surfaces as an `OPENAI_API_KEY` error, with redacted diagnostics in the run
+folder. After correcting a rejected key, use a fresh output directory.
+
+Run the full pipeline with a budget you authorize. This example uses the local
+ALUPCO PDF. Set `$Pdf` to another local PDF path or a direct PDF URL as needed.
+
+```powershell
+$Pdf = (Resolve-Path -LiteralPath '.\data\50SG ALUPCO PDF COMBINED.pdf').Path
+$Out = Join-Path (Get-Location).Path ('runs\opencode_' + [guid]::NewGuid().ToString('N'))
+$Budget = Read-Host 'Authorized cumulative budget in USD, using a decimal point'
+if ($Budget -notmatch '^[0-9]+(\.[0-9]+)?$' -or [double]$Budget -lt 0.50) {
+    throw 'Enter a USD budget of at least 0.50.'
+}
+.\.venv\Scripts\python.exe -u -B -m facade_dspy $Pdf --out $Out --budget-usd $Budget `
+    --accept-cli-cost-estimates --export-zip (Join-Path $Out 'results.zip')
+if ($LASTEXITCODE -ne 0) { throw "Extraction failed. See $Out\pipeline.log." }
+```
+
+Check `coverage.status` and `remaining_pages` in the printed JSON. Open
+`review.html` inside `snapshot_directory`. A budget stop or pilot failure
+can produce a partial snapshot. OpenCode's budget is a scheduling allowance,
+and the CLI lacks a per-call dollar cap.
+
+If OpenAI reports insufficient credits, add API credits to the organization
+associated with your key. For a rate limit, wait for the limit to reset. Rerun
+with the same PDF, `--out`, backend, and model. The queue resumes the failed
+job and reuses completed checkpoints. OpenCode uses a temporary loopback
+connection to prevent billing rejections from triggering upstream retries.
 
 ## Backend and model configuration
 
@@ -27,20 +71,19 @@ extra DSPy planner model were added.
 
 | Backend | Default model | Required variable |
 |---|---|---|
+| `opencode` (default) | `openai/gpt-6.1-sol` | `OPENAI_API_KEY` |
 | `claude-code` | `claude-sonnet-5-5` | `ANTHROPIC_API_KEY` |
-| `opencode` | `openai/gpt-5.4-mini` | `OPENAI_API_KEY` |
 
 Selection precedence: explicit `--backend` / `--model` (or Python arguments),
 then `FACADE_BACKEND` / `FACADE_MODEL` from the environment and project `.env`,
 then defaults in `model.py`. Process environment values take precedence over
-`.env`. Only the selected backend's key is required for live work. The filled-in
-`.env` was not changed by this integration.
+`.env`. Only the selected backend's key is required for live work.
 
 Optional `.env` selection, with no key values shown:
 
 ```dotenv
 FACADE_BACKEND=opencode
-FACADE_MODEL=openai/gpt-5.4-mini
+FACADE_MODEL=openai/gpt-6.1-sol
 ```
 
 Both the regular CLI and `test_pdf_page.py` accept `--backend`, `--model` and
@@ -55,7 +98,7 @@ Example switches to add to a **future authorized live command**:
 # Claude Code:
 --backend claude-code --model claude-sonnet-5-5
 # OpenCode using the OpenAI API:
---backend opencode --model openai/gpt-5.4-mini
+--backend opencode --model openai/gpt-6.1-sol
 ```
 
 For an offline page test, either selection can be added alongside `--index-only`.
@@ -122,7 +165,7 @@ not establish live OCR quality or authenticated account compatibility.
 Protocol references: [OpenCode CLI](https://opencode.ai/docs/cli/),
 [configuration](https://opencode.ai/docs/config/),
 [OpenCode 1.19.0 image Read implementation](https://github.com/anomalyco/opencode/blob/v1.19.0/packages/opencode/src/tool/read.ts),
-[OpenAI model capabilities](https://developers.openai.com/api/docs/models/gpt-5.4-mini).
+[OpenAI model catalogue](https://developers.openai.com/api/docs/models).
 
 ## Existing commands
 
@@ -142,19 +185,17 @@ For physical PDF page 15 of the local ALUPCO catalogue only:
 
 Add `--index-only` for a local test without model calls. This runner creates a fresh `test_results/page15_<unique ID>/`, isolates original page 15 as test PDF page 1, and saves the page mapping, data, review HTML and results ZIP. `console.log` captures preparation errors; `outputs/pipeline.log` captures stage progress, third-party notices and full Python tracebacks. The agent also uses this log when called directly. The runner reports failure with a nonzero exit code and the test folder path. Existing outputs are never reused or overwritten. Windows PowerShell 5.1 must not receive informational native stderr through `2>&1` with `ErrorActionPreference=Stop`; diagnostics are captured inside Python instead.
 
-Every Claude Code request includes exact input file paths and required image Read calls. The restricted Read tool cannot list a directory. Responses without successful source-image reads are rejected even when the CLI reports success. Inspect `raw_responses/*.read_validation.json` for missing image reads and tool errors; the original reply and reported usage remain preserved. Failed attempts are not retried automatically.
-
-Provider errors retain their actual HTTP status and reason, such as `401 Invalid API key`, rather than being reported as incomplete image reads. A key being present in `.env` does not establish that it is valid; an inherited `ANTHROPIC_API_KEY` also takes precedence over `.env`. Use `--index-only` for local processing without API calls. Existing failed-run evidence is preserved.
-
-For a new machine:
+For Claude Code, set `ANTHROPIC_API_KEY` in `.env` and select
+`--backend claude-code --model claude-sonnet-5-5` with a fresh output
+directory. Install its CLI locally if needed:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[test]"
-npm install --prefix .local_setup/claude --no-audit --no-fund @anthropic-ai/claude-code@2.1.318
+npm.cmd install --prefix .local_setup/claude --no-audit --no-fund @anthropic-ai/claude-code@2.1.318
 ```
 
-A native `claude` on PATH also works. Use `--claude-executable` to select another native executable. Python 3.11+ is required; npm installation needs Node 22+. Existing extraction folders and the three PDF ZIPs remain untouched.
+A native `claude` on PATH also works. Use `--claude-executable` to select
+another executable. Both adapters require successful source image reads
+and retain failure details in `raw_responses/`.
 
 ## Use existing results without a model
 
@@ -180,6 +221,39 @@ The source PDF hash must match `document.json`. The importer accepts the old `fu
 All active descriptions/reports are English. Verbatim native/OCR evidence can retain the source language. Model checks, structural checks and human engineering approval are different states; **all extracted knowledge remains proposed**.
 
 ## Output files
+
+Analytical exports include typed `canonical_id` keys and `canonical_*` foreign
+keys for graph joins. Source IDs and legacy columns are retained. Entity and
+detail keys are scoped to the document and region, while component keys are
+scoped to the manufacturer/system or to the document if identity is unresolved.
+
+Relationship exports keep the original predicate, its canonical predicate, the
+validation status, and any reasons. Use `data/graph_relationships.*` for eligible
+engineering proposals and `data/relationships.*` to review every extracted
+edge. Graph eligibility does not imply human approval.
+
+A full extraction or replay pins the effective manufacturer profile, its version
+and hashes in `manufacturer_profile.json`. Configuration edits take effect in
+new workspaces. An existing workspace and a replay of its snapshot use the saved
+profile. Known legacy checkpoints keep their original commits and use a recorded
+built-in profile baseline when historical configuration was unavailable.
+Unexpected checkpoint or artifact changes stop resume without rewriting commits.
+
+Replay from a published run or snapshot preserves committed region proposals and
+source reviews, including partial and disputed regions. New snapshots include
+`replay_manifest.json` to detect changes to that evidence. Legacy page-only
+bundles can still be imported. Their edges remain ineligible when the original
+review evidence is unavailable.
+Measurements resolve shared local IDs as entity first, matching the legacy
+page merger. Canonical keys identify records within their source scope.
+
+Each successful export publishes a complete generation under `snapshots/`
+and atomically advances `publication.json`. Use the printed
+`snapshot_directory` for a stable view. Only queue-committed proposals and
+reviews enter a generation. Replay, comparison and ZIP export pin that
+generation, with support for historical bundles. Root-level report and data
+paths are compatibility copies. Failed and unpublished evidence remains in
+the run workspace for diagnosis. Snapshots are retained for audit.
 
 | Location | Contents |
 |---|---|
@@ -265,6 +339,58 @@ an existing pipeline result or exception. Requesting profiling without the
 optional dependency fails early with an installation instruction.
 
 Implementation follows the [Pyinstrument Python API](https://pyinstrument.readthedocs.io/en/latest/reference.html).
+
+## Offline accuracy benchmark
+
+Evaluate saved proposals against independently reviewed ground truth. Each case
+labels one complete region. Copy its source hash, physical PDF page, unit ID and
+normalized bounds from the evidence, then label the expected records using the
+existing `PageResult` schema. Keep the ground truth separate from the predictions.
+
+This example shows the manifest format for an intentionally empty region.
+Replace the placeholder hash and reviewer with the actual values.
+
+```json
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "catalogue-page-1-top",
+      "reviewed_by": "Reviewer name",
+      "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "unit_id": "p0001:top",
+      "bbox": [0, 0, 1, 0.5],
+      "expected": {
+        "pdf_page": 1, "page_kind": "detail", "details": [], "nodes": [],
+        "relations": [], "measurements": [], "tables": [], "instructions": [],
+        "unresolved": []
+      }
+    }
+  ]
+}
+```
+
+```powershell
+.\.venv\Scripts\python.exe -B -m facade_dspy.benchmark `
+    --ground-truth '.\ground_truth.json' --predictions '.\path\to\run'
+```
+
+`--predictions` also accepts a snapshot directory or a saved
+`data/all_proposals.json` file. Repeat it for multiple catalogues. The scorer
+reads local JSON and prints a JSON report. It matches cases by PDF hash, page,
+unit ID and bounds. Missing predictions contribute misses. Unlabeled regions
+are counted separately. Duplicate labels or predictions are rejected.
+
+The report gives precision, recall, F1 and the underlying counts by case and
+pooled by metric. It scores literal article observations, dimension values,
+known measurement units, table headers and units, cell contents in position,
+and directed relationships with their conditions and evidence basis. Matches
+are exact, with multiplicity preserved. Model-local node IDs may differ.
+Article and callout identify linked occurrences for scoring, so repeated
+occurrences with the same pair are indistinguishable. The scorer applies no
+numeric tolerance or unit conversion. Metrics with no observations on either
+side have a null F1. Synthetic regression fixtures establish scoring behavior.
+Real catalogue accuracy requires separately reviewed labels.
 
 ## Tests
 

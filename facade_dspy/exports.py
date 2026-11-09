@@ -8,6 +8,8 @@ import polars as pl
 import pymupdf
 from .storage import read,dump,objecthash
 from .schema import validate
+from .publication import published_directory
+from . import manufacturers
 
 STYLE='body{font:16px system-ui;line-height:1.5;max-width:1200px;margin:30px auto;padding:18px;color:#24374b}a{color:#006599}table{border-collapse:collapse;width:100%}td,th{padding:9px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}.scroll{overflow:auto}img{max-width:100%;height:auto}input{padding:12px;width:90%}.notice{padding:16px;background:#fff2cc}pre{white-space:pre-wrap;overflow-wrap:anywhere}'
 
@@ -28,55 +30,147 @@ def dataset(run,name,rows):
     frame.write_parquet(run/'data'/f'{name}.parquet');frame.write_csv(run/'data'/f'{name}.csv',null_value='null')
 
 
-def literal_article(value,kind):
-    if not value:return False
-    if re.match(r'^(?:geff|K\d{7}$)',value,re.I):return False
-    return bool(re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{2,24}|\d{3}[ \u00a0]?\d{3}',value) or re.fullmatch(r'\d{4}',value) and any(x in kind.casefold() for x in ['tool','jig']))
+def literal_article(value,kind,profile=None):
+    """Literal component article test; rules come from the manufacturer profile (default.json if none)."""
+    return manufacturers.literal_article(value,kind,profile or manufacturers.resolve({})['profile'])
+
+
+WHOLE_PAGE=[0,0,1,1]
+
+
+def _inside(box,scope,tolerance):
+    """Centre of an evidence box lies within the region scope (normalised page coordinates)."""
+    x,y=(box[0]+box[2])/2,(box[1]+box[3])/2
+    return scope[0]-tolerance<=x<=scope[2]+tolerance and scope[1]-tolerance<=y<=scope[3]+tolerance
+
+
+def relationship_status(relation,source,target,disputed,profile=None,scope=None):
+    """Strict graph eligibility. Every relationship stays a proposal; only 'proposed' ones are graph-eligible.
+
+    invalid    – self reference, or an endpoint that is not a component (drawing ref, dimension, step ...)
+    unresolved – unrecognised predicate, unresolved endpoint, inferred basis, or evidence outside the region
+    disputed   – otherwise acceptable, but the model source check reported an error in this region
+    """
+    profile=profile or manufacturers.resolve({})['profile']
+    excluded={k.casefold() for k in profile.get('relationship_endpoint_exclude_kinds',['drawing_reference','unresolved_reference'])}
+    invalid=[];unresolved=[]
+    if relation['source']==relation['target']:invalid.append('self_reference')
+    for side,node in (('source',source),('target',target)):
+        kind=(node.get('kind') or '').casefold()
+        if kind=='unresolved_reference':unresolved.append(side+'_unresolved_reference')
+        elif kind in excluded:invalid.append(f'{side}_is_{kind}')
+    if manufacturers.canonical_predicate(relation['predicate'],profile) is None:unresolved.append('unrecognized_predicate')
+    if relation['basis'] not in ('explicit_text','drawing_reading'):unresolved.append('inferred_not_observed')
+    if scope is not None:
+        tolerance=profile.get('relationship_scope_tolerance',.02)
+        box=relation.get('bbox')
+        if not box or box==WHOLE_PAGE or box[0]==box[2] or box[1]==box[3]:unresolved.append('no_evidence_locator')
+        elif not _inside(box,scope,tolerance):unresolved.append('evidence_outside_region')
+        for side,node in (('source',source),('target',target)):
+            box=node.get('bbox')
+            if not box or box==WHOLE_PAGE or box[0]==box[2] or box[1]==box[3]:
+                unresolved.append(side+'_no_evidence_locator')
+            elif not _inside(box,scope,tolerance):
+                unresolved.append(side+'_outside_region')
+        if source.get('detail_id') and target.get('detail_id') and source['detail_id']!=target['detail_id']:
+            unresolved.append('endpoints_in_different_details')
+    reasons=invalid+unresolved+(['model_source_check_reported_error'] if disputed else [])
+    status='invalid' if invalid else 'unresolved' if unresolved else 'disputed' if disputed else 'proposed'
+    return status,reasons
+
+
+def canonical_id(kind, *scope):
+    """Build deterministic typed keys from separate scope segments."""
+    return kind + ':' + objecthash([kind, *scope])
+
+
+def occurrence_keys(items,content):
+    """Content-addressed local keys; identical records get a stable occurrence suffix."""
+    seen=defaultdict(int);keys=[]
+    for item in items:
+        signature=objecthash(content(item));seen[signature]+=1
+        keys.append((signature,seen[signature]))
+    return keys
 
 
 def export(run,units,identity,status,costs,compare):
     source=read(run/'source.json');docid='pdf:'+source['source_sha256'];brand=identity.get('manufacturer_brand');system=identity.get('system_id')
-    namespace=(brand.casefold()+':'+system.casefold()) if brand and system else docid+':unresolved_identity'
-    registry=defaultdict(list);entities=[];details=[];relations=[];measurements=[];rows=[];instructions=[];questions=[];transcription=[];crops=[];records={};crop_plans=[]
+    pin=manufacturers.read_pin(run,source['source_sha256'])
+    scope=pin['scope'] if pin else manufacturers.resolve(identity);profile=scope['profile']
+    # Unmatched brands keep the earlier case-folded keys, so existing canonical IDs do not change.
+    namespace=(scope['brand_key']+':'+scope['system_key']) if brand and system else docid+':unresolved_identity'
+    component_scope = ('system', scope['brand_key'], scope['system_key']) if brand and system else ('document', docid)
+    disputed_units={read(p)['unit_id'] for p in (run/'reviews').glob('*.json') if any(f['severity']=='error' for f in read(p)['findings'])}
+    registry=defaultdict(list);entities=[];details=[];relations=[];measurements=[];tables=[];rows=[];instructions=[];questions=[];transcription=[];crops=[];records={};crop_plans=[]
     for path in sorted((run/'proposals').glob('*.json')):
         record=read(path);unit=record['unit'];uid=unit['unit_id'];n=unit['pdf_page']
         if record.get('metadata',{}).get('source_sha256')!=source['source_sha256']:raise ValueError('Proposal belongs to a different source PDF')
         if uid not in {u['unit_id'] for u in units}:raise ValueError('Proposal belongs to an unknown unit')
-        value=validate(record['extraction'],n);records[uid]=record
+        value=validate(record['extraction'],n,profile['drawing_reference_patterns']);records[uid]=record
         index=read(run/'index'/f'p{n:04}.json')
         def provenance(box):return dict(manufacturer_brand=brand,system_id=system,document_id=docid,edition=identity.get('edition'),
             source_sha256=source['source_sha256'],pdf_page=n,printed_page=index['printed_page'],region_id=uid,bbox=box,
             source_image=f'images/p{n:04}.png',reading_method=record['metadata'].get('method','Claude Code visual reading'),review_status='proposed')
         def scoped(local):return docid+':'+uid+':'+local
+        def key(kind, *local):return canonical_id(kind, docid, uid, *local)
+        detail_keys = {d['id']: key('detail', d['id']) for d in value['details']}
+        entity_keys = {node['id']: key('entity', node['id']) for node in value['nodes']}
         for d in value['details']:
-            details.append(dict(**d,detail_id=scoped(d['id']),record_class='synthetic_review_bucket' if 'review bucket' in d['title'].casefold() else 'source_detail',provenance=provenance(d['bbox'])))
+            details.append(dict(**d,detail_id=scoped(d['id']),canonical_id=detail_keys[d['id']],record_class='synthetic_review_bucket' if 'review bucket' in d['title'].casefold() else 'source_detail',provenance=provenance(d['bbox'])))
         node_map={v['id']:v for v in value['nodes']}
         for node in value['nodes']:
-            kind=node['kind'].casefold();article=node['article_id'];valid=literal_article(article,kind)
+            kind=node['kind'].casefold();article=node['article_id'];valid=literal_article(article,kind,profile)
+            article_id_key=manufacturers.article_key(article,profile) if valid else None
+            article_status=None if not article else 'literal_component_article' if valid else 'drawing_reference' if manufacturers.drawing_reference(article,profile) else 'unparsed_article_label'
             category='tool' if any(s in kind for s in ['tool','jig']) else 'consumable' if any(s in kind for s in ['consumable','sealant','adhesive']) else 'fastener' if any(s in kind for s in ['screw','bolt','fastener']) else 'profile' if any(s in kind for s in ['mullion','transom','profile']) else 'unknown'
             cls='drawing_reference' if kind=='drawing_reference' else 'connection' if kind in ['connection','joint','assembly_connection'] else 'machining_feature' if not article and any(s in kind for s in ['hole','feature','machining','pattern']) else 'unresolved_reference' if 'unresolved' in kind else 'component_definition_reference' if 'definition' in kind or valid and 'reference' in kind else 'drawing_instance'
-            e=dict(**node,entity_id=scoped(node['id']),entity_class=cls,component_category=category,component_id=namespace+':'+article if valid else None,
+            e=dict(**node,entity_id=scoped(node['id']),entity_class=cls,component_category=category,component_id=namespace+':'+article_id_key if valid else None,article_status=article_status,manufacturer_profile=scope['profile_id'],
+                canonical_id=entity_keys[node['id']],canonical_detail_id=detail_keys[node['detail_id']],
+                canonical_component_id=canonical_id('component', *component_scope, article_id_key) if valid else None,
                 quantity_scope='observed illustration occurrence, not required installed quantity',provenance=provenance(node['bbox']))
             entities.append(e)
-            if valid:registry[article].append(dict(kind=node['kind'],label=node['label'],material=node['material'],provenance=e['provenance']))
-            elif article:questions.append(dict(category='unresolved_article_label',message=article,provenance=e['provenance']))
-        for r in value['relations']:
+            if valid:registry[article_id_key].append(dict(kind=node['kind'],label=node['label'],material=node['material'],literal_article_id=article,canonical_entity_id=e['canonical_id'],provenance=e['provenance']))
+            elif article:questions.append(dict(category='unresolved_article_label',message=article,article_status=article_status,provenance=e['provenance']))
+        relation_keys=occurrence_keys(value['relations'],lambda r:[r['source'],r['predicate'],r['target'],r['basis'],r['condition']])
+        for r,local in zip(value['relations'],relation_keys):
+            rel_status,reasons=relationship_status(r,node_map[r['source']],node_map[r['target']],uid in disputed_units,profile,unit['bbox'])
+            if (record['metadata'].get('legacy_review_unavailable') or
+                    record['metadata'].get('method')=='reuse_exact_source_hash; no model call'):
+                reasons.append('legacy_review_unavailable')
+                if rel_status=='proposed':rel_status='unresolved'
+            if rel_status!='proposed':questions.append(dict(category='relationship_validation',message=f"{r['source']} -{r['predicate']}-> {r['target']}: {rel_status} ({', '.join(reasons)})",provenance=provenance(r['bbox'])))
             relations.append(dict(**r,source_node=scoped(r['source']),target_node=scoped(r['target']),
+                canonical_predicate=manufacturers.canonical_predicate(r['predicate'],profile),
+                relationship_status=rel_status,status_reasons=reasons,graph_eligible=rel_status=='proposed',human_confirmed=False,
+                canonical_id=key('relationship',*local),canonical_source_id=entity_keys[r['source']],canonical_target_id=entity_keys[r['target']],
                 source_article_id=node_map[r['source']]['article_id'],target_article_id=node_map[r['target']]['article_id'],provenance=provenance(r['bbox'])))
-        for m in value['measurements']:
+        measurement_keys=occurrence_keys(value['measurements'],lambda m:[m['subject'],m['property'],m['value'],m['unit'],m['datum'],m['condition']])
+        for m,local in zip(value['measurements'],measurement_keys):
             item=dict(m)
             if item['unit'] in ['','unknown','(none)']:item['unit']=None
-            measurements.append(dict(**item,provenance=provenance(m['bbox'])))
+            # Match the legacy full-page merge's node-first resolution of shared local IDs.
+            subject = m['subject']
+            subject_id = entity_keys[subject] if subject in entity_keys else detail_keys[subject]
+            measurements.append(dict(**item,canonical_id=key('measurement',*local),canonical_subject_id=subject_id,provenance=provenance(m['bbox'])))
         for t in value['tables']:
+            table_key = key('table',t['id'])
+            tables.append(dict(id=t['id'],canonical_id=table_key,title=t['title'],columns=t['columns'],
+                units=t['units'],footnotes=t['footnotes'],provenance=provenance(t['bbox'])))
             for i,row in enumerate(t['rows'],1):
                 rows.append(dict(table_id=scoped(t['id']),row_number=i,title=t['title'],headers=t['columns'],units=[None if u in ['', 'unknown','(none)'] else u for u in t['units']],
+                    canonical_id=key('table_row',t['id'],i),canonical_table_id=table_key,original_table_id=t['id'],
                     cells=row['cells'],footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
                 for col,cell in zip(t['columns'],row['cells']):
-                    if cell and re.search(r'Art\.?[- ]?(?:Nr|No)|article|reference',col,re.I) and not re.search('drawing',col,re.I):
-                        for ref in re.findall(r'\b(?:[A-Z]{1,4}\d{3,5}|\d{3}[ \u00a0]?\d{3})\b',cell):
-                            if literal_article(ref,'table_reference'):registry[ref].append(dict(kind='table_reference',label=' | '.join(c or 'Unknown' for c in row['cells']),material=None,
-                                headers=t['columns'],units=t['units'],footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
-        instructions.extend(dict(**i,provenance=provenance(i['bbox'])) for i in value['instructions'])
+                    if cell and manufacturers.article_column(col,profile):
+                        found,drawing_refs,leftover=manufacturers.table_articles(cell,profile)
+                        for ref in found:registry[manufacturers.article_key(ref,profile)].append(dict(kind='table_reference',label=' | '.join(c or 'Unknown' for c in row['cells']),material=None,
+                                literal_article_id=ref,headers=t['columns'],units=t['units'],footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
+                        for ref in drawing_refs:questions.append(dict(category='drawing_reference_in_article_column',message=f'{col}: {ref}',provenance=provenance(row['bbox'])))
+                        if leftover:questions.append(dict(category='unparsed_table_article_cell',message=f'{col}: {leftover}',provenance=provenance(row['bbox'])))
+        instruction_keys=occurrence_keys(value['instructions'],lambda x:[x['detail_id'],x['sequence'],x['text'],x['condition']])
+        instructions.extend(dict(**instruction,canonical_id=key('instruction',*local),
+            canonical_detail_id=detail_keys[instruction['detail_id']],provenance=provenance(instruction['bbox']))
+            for instruction,local in zip(value['instructions'],instruction_keys))
         questions.extend(dict(category='source_or_model_question',message=q,provenance=provenance(unit['bbox'])) for q in value['unresolved'])
         transcription.extend(dict(**s,provenance=provenance(s['bbox'])) for s in record.get('source_text',[]))
         for i,item in enumerate(value['tables']+value['details']):
@@ -88,7 +182,8 @@ def export(run,units,identity,status,costs,compare):
             clip=pymupdf.Rect(box[0]*w,box[1]*h,box[2]*w,box[3]*h);scale=1800/max(clip.width,clip.height)
             page.get_pixmap(matrix=pymupdf.Matrix(scale,scale),clip=clip,alpha=False).save(plan['target'])
             crops.append(dict(title=plan['title'],image='crops/'+plan['target'].name,provenance=plan['provenance']))
-    components=[dict(component_id=namespace+':'+a,article_id=a,manufacturer_brand=brand,system_id=system,observations=obs,review_status='proposed') for a,obs in sorted(registry.items())]
+    components=[dict(component_id=namespace+':'+a,canonical_id=canonical_id('component', *component_scope,a),
+        article_id=a,manufacturer_brand=brand,system_id=system,observations=obs,review_status='proposed') for a,obs in sorted(registry.items())]
     conflicts=[]
     for c in components:
         materials=sorted({o['material'].casefold().strip() for o in c['observations'] if o.get('material')})
@@ -97,15 +192,17 @@ def export(run,units,identity,status,costs,compare):
     for directory in compare:
         base=Path(directory)
         if (base/'outputs/document.json').exists():base=base/'outputs'
+        base=published_directory(base)
         doc=read(base/'document.json')
         oldpath=base/'components.json'
         if not oldpath.exists():oldpath=base/'full/component_registry_reviewed.json'
         old=read(oldpath);old=old.get('components',[]) if isinstance(old,dict) else old
         first=old[0] if old else {}
         other_brand=doc.get('manufacturer_brand') or first.get('manufacturer_brand');other_system=doc.get('system_id') or first.get('system_id')
-        if not brand or not system or not other_brand or not other_system or brand.casefold()!=other_brand.casefold() or system.casefold()!=other_system.casefold():
+        other=manufacturers.resolve(dict(manufacturer_brand=other_brand,system_id=other_system,legal_manufacturer=doc.get('legal_manufacturer')))
+        if not brand or not system or not other_brand or not other_system or scope['brand_key']!=other['brand_key'] or scope['system_key']!=other['system_key']:
             questions.append(dict(category='cross_document_scope',message='Manufacturer/system identity does not match or is unknown; no compatibility or component identity links created.',source_document=str(directory)));continue
-        by_id={c['article_id']:c for c in old}
+        by_id={manufacturers.article_key(c['article_id'],profile):c for c in old if c.get('article_id')}
         for c in components:
             if c['article_id'] in by_id:
                 previous=by_id[c['article_id']]
@@ -126,23 +223,26 @@ def export(run,units,identity,status,costs,compare):
     for path in (run/'reviews').glob('*.json'):
         review=read(path)
         for finding in review['findings']:questions.append(dict(category='model_source_check',unit_id=review['unit_id'],**finding,status='unresolved; not human approval'))
-    collections=dict(components=components,entities=entities,details=details,relationships=relations,measurements=measurements,
-        table_rows=rows,instructions=instructions,questions=questions,conflicts=conflicts,cross_document_links=cross,cross_document_comparison=comparisons,
+    collections=dict(components=components,entities=entities,details=details,relationships=relations,
+        graph_relationships=[r for r in relations if r['graph_eligible']],measurements=measurements,
+        tables=tables,table_rows=rows,instructions=instructions,questions=questions,conflicts=conflicts,cross_document_links=cross,cross_document_comparison=comparisons,
         source_text=transcription,source_crops=crops,reference_index=read(run/'reference_index.json'))
     for name,predicate in [('drawing_instances',lambda e:e['entity_class']=='drawing_instance'),('connections',lambda e:e['entity_class']=='connection'),
                            ('machining_features',lambda e:e['entity_class']=='machining_feature'),('tools',lambda e:e['component_category']=='tool'),
                            ('consumables',lambda e:e['component_category']=='consumable')]:collections[name]=[e for e in entities if predicate(e)]
     for name,data in collections.items():dataset(run,name,data)
     parents={u['parent'] for u in units if u['parent']};leaves=[u for u in units if u['unit_id'] not in parents]
-    metadata_pages={r['unit']['pdf_page'] for r in records.values() if r['extraction']['page_kind']=='metadata_index_only'}
     complete=[n for n in range(1,source['page_count']+1) if all(u['unit_id'] in records for u in leaves if u['pdf_page']==n) and any(u['pdf_page']==n for u in leaves)]
+    metadata_pages={n for n in complete if all(records[u['unit_id']]['extraction']['page_kind']=='metadata_index_only'
+                                               for u in leaves if u['pdf_page']==n)}
     coverage=dict(status=status,total_pdf_pages=source['page_count'],indexed_pages=len(read(run/'reference_index.json')),
         complete_proposal_pages=complete,metadata_pages=sorted(metadata_pages),remaining_pages=sorted(set(range(1,source['page_count']+1))-set(complete)),
         completed_region_proposals=len(records),total_leaf_regions=len(leaves),human_engineering_approved_records=0,
         limitations=['Native text and region detection are retrieval aids.','Source boxes are approximate, not CAD geometry.',
                     'Model source checks are not human approval.','Material-string differences do not exhaust compatibility/geometry conflicts.'])
     dump(run/'coverage.json',coverage);dump(run/'cost_summary.json',costs)
-    dump(run/'document.json',dict(**source,**identity,document_id=docid,sha256=source['source_sha256'],review_status='proposed'))
+    dump(run/'document.json',dict(**source,**identity,manufacturer_profile=scope['profile_id'],
+        document_id=docid,sha256=source['source_sha256'],review_status='proposed',replay_manifest_version=1))
     dump(run/'components.json',components)
     dataset(run,'all_proposals',list(records.values()))
     # Export a legacy-compatible full-page view only when EVERY leaf region is complete.
@@ -161,7 +261,7 @@ def export(run,units,identity,status,costs,compare):
             for t in value['tables']:t['id']=prefix+t['id']
             for instruction in value['instructions']:instruction['detail_id']=dmap[instruction['detail_id']]
             for key in ['details','nodes','relations','measurements','tables','instructions','unresolved']:merged[key].extend(value[key])
-        validate(merged,n)
+        validate(merged,n,profile['drawing_reference_patterns'])
         merged['_metadata']=dict(source_document_id=docid,source_sha256=source['source_sha256'],review_status='proposed',
             full_page_scope_basis='all planned leaf regions have validated proposals',unit_ids=[u['unit_id'] for u in page_units])
         dump(run/'full/pages'/f'p{n:04}.json',merged)

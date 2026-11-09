@@ -5,11 +5,27 @@ from pathlib import Path
 import hashlib,json,sqlite3,time,traceback,uuid
 import polars as pl
 from .storage import dump
+from .checkpoint_compat import compatible_code
 QUEUE_VERSION='2.0-portable'
 WORKER_VERSION='dspy-claude-code-1'
 def stamp():return datetime.now(timezone.utc).isoformat()
 def digest(path):
     with Path(path).open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
+
+
+def compatible_spec(old,new):
+    old_refs,new_refs=old['inputs'].keys(),new['inputs'].keys()
+    added=new_refs-old_refs
+    if old_refs-new_refs or (added and not (old['stage']=='region_extraction' and
+            added=={'code:manufacturers.py','run:manufacturer_profile.json'})):
+        return False
+    if any(not compatible_code(ref,sha,new['inputs'][ref]) for ref,sha in old['inputs'].items()):
+        return False
+    if not compatible_code('code:queue.py',old['worker_code_sha256'],new['worker_code_sha256']):
+        return False
+    fields=old.keys()-{'inputs','worker_code_sha256'}
+    return fields==new.keys()-{'inputs','worker_code_sha256'} and all(old[k]==new[k] for k in fields)
+
 
 class WorkQueue:
     def ref(self,path):
@@ -92,6 +108,12 @@ class WorkQueue:
             if old and old['status'] == 'running':
                 raise RuntimeError(f'Cannot change running job {job_id}')
             if old and old['spec_hash'] == hashed:
+                return
+            if old and compatible_spec(json.loads(old['spec']),spec):
+                if old['status'] not in ('completed','needs_review'):
+                    self.db.execute('UPDATE jobs SET spec=?,spec_hash=?,updated_at=? WHERE id=?',
+                                    (encoded,hashed,stamp(),job_id))
+                    self.event(job_id,'compatible_worker_update')
                 return
             for dep in dependencies:
                 if dep == job_id or not self.db.execute('SELECT 1 FROM jobs WHERE id=?', (dep,)).fetchone():
@@ -221,19 +243,51 @@ class WorkQueue:
                 self.event(job_id, 'failed', err, attempt)
             raise
 
-    def audit(self):
+    def committed_json(self, job_id, path):
+        """Read the exact artifact covered by the latest successful commit."""
+        row = self.db.execute("""
+            SELECT j.spec, a.id AS attempt_id, a.checkpoint
+            FROM jobs j JOIN attempts a ON a.job_id=j.id
+            WHERE j.id=? AND j.status='completed' AND a.status='completed'
+            ORDER BY a.ordinal DESC LIMIT 1
+        """, (job_id,)).fetchone()
+        if row is None:
+            return None
+        receipt = json.loads(self.path(row['checkpoint']).read_text(encoding='utf-8'))
+        if (receipt['job_id'] != job_id or receipt['attempt_id'] != row['attempt_id']
+                or receipt['spec'] != json.loads(row['spec'])):
+            raise ValueError(f'Checkpoint identity changed for {job_id}')
+        expected = receipt['outputs'].get(self.ref(path))
+        if expected is None:
+            raise ValueError(f'Committed job {job_id} does not cover {path.name}')
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != expected:
+            raise ValueError(f'Committed output changed for {job_id}')
+        return json.loads(content)
+
+    def audit(self, *, preserve=False):
         changed = []
         for job in self.db.execute("SELECT * FROM jobs WHERE status IN ('completed','needs_review')").fetchall():
             spec = json.loads(job['spec'])
-            bad = any(not self.path(p).exists() or digest(self.path(p)) != sha for p, sha in spec['inputs'].items())
-            row = self.db.execute('SELECT checkpoint FROM attempts WHERE job_id=? ORDER BY ordinal DESC LIMIT 1', (job['id'],)).fetchone()
+            bad = (not compatible_code('code:queue.py',spec['worker_code_sha256'],digest(Path(__file__)))
+                   or any(not self.path(p).exists() or not compatible_code(p,sha,digest(self.path(p)))
+                          for p,sha in spec['inputs'].items()))
+            row = self.db.execute('SELECT id,checkpoint FROM attempts WHERE job_id=? ORDER BY ordinal DESC LIMIT 1', (job['id'],)).fetchone()
             if not row or not row['checkpoint'] or not self.path(row['checkpoint']).exists():
                 bad = True
             else:
                 receipt = json.loads(self.path(row['checkpoint']).read_text(encoding='utf-8'))
+                bad |= (receipt.get('job_id')!=job['id'] or receipt.get('attempt_id')!=row['id']
+                        or receipt.get('spec')!=spec)
                 bad |= any(not self.path(p).exists() or digest(self.path(p)) != sha for p, sha in receipt['outputs'].items())
+                for dep,expected in receipt.get('dependency_checkpoint_hashes',{}).items():
+                    dependency=self.db.execute(
+                        "SELECT checkpoint FROM attempts WHERE job_id=? AND status='completed' ORDER BY ordinal DESC LIMIT 1",
+                        (dep,)).fetchone()
+                    bad |= not dependency or not self.path(dependency['checkpoint']).is_file() or digest(self.path(dependency['checkpoint']))!=expected
             if bad:
                 changed.append(job['id'])
-        for j in changed:
-            self.invalidate(j, 'input/output integrity audit failed')
+        if not preserve:
+            for j in changed:
+                self.invalidate(j, 'input/output integrity audit failed')
         return changed

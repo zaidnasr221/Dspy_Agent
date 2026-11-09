@@ -40,10 +40,14 @@ class Budget:
             dump(self.path,rows)
 
     def cancel_before_launch(self,ident):
+        self.release_unused(ident,'No model process was started')
+
+    def release_unused(self,ident,reason):
         with exclusive_lock(self.lock):
             rows,_,_=self.state();row=next(r for r in rows if r['attempt_id']==ident)
-            row.update(status='settled',reported_cost_usd=0,usage=None,reason='Operating-system launch failed before a model process started')
-            dump(self.path,rows)
+            if row['status']=='reserved':
+                row.update(status='settled',reported_cost_usd=0,usage=None,reason=reason)
+                dump(self.path,rows)
 
     def summary(self):
         _,spent,held=self.state()

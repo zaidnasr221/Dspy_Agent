@@ -4,6 +4,9 @@ import re
 
 class ToolFailure(RuntimeError):pass
 class IncompleteRead(ToolFailure):pass
+class AuthenticationFailure(ToolFailure):pass
+class InsufficientCredits(ToolFailure):pass
+class RateLimitFailure(ToolFailure):pass
 
 def redact(text):
     for name in ('OPENAI_API_KEY','ANTHROPIC_API_KEY'):

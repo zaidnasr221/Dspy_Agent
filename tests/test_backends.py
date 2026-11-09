@@ -1,6 +1,7 @@
 """Provider switching and CLI protocol checks; synthetic fixtures, no API traffic."""
 from pathlib import Path
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -18,8 +19,9 @@ def offline(monkeypatch):
     monkeypatch.setattr(socket.socket,'connect',denied)
     monkeypatch.setenv('OPENAI_API_KEY','offline-openai-fixture-not-a-real-key')
     monkeypatch.setenv('ANTHROPIC_API_KEY','offline-anthropic-fixture-not-a-real-key')
-    monkeypatch.delenv('FACADE_BACKEND',raising=False)
-    monkeypatch.delenv('FACADE_MODEL',raising=False)
+    for name in ('FACADE_BACKEND', 'FACADE_MODEL'):
+        monkeypatch.setenv(name, '')
+        monkeypatch.delenv(name)
 
 
 def fake_cli(tmp_path,backend='opencode',mode='ok'):
@@ -37,6 +39,7 @@ if BACKEND=='opencode':
  assert 'run' in sys.argv and '--pure' in sys.argv and '--format' in sys.argv
  config=json.loads(os.environ['OPENCODE_CONFIG_CONTENT'])
  assert config['enabled_providers']==['openai']
+ assert config['model']==config['small_model']==sys.argv[sys.argv.index('--model')+1]
  assert config['permission']['*']=='deny' and isinstance(config['permission']['read'],dict)
  assert config['provider']['openai']['options']['apiKey']=='{env:OPENAI_API_KEY}'
  assert config['share']=='disabled' and config['autoupdate'] is False
@@ -45,8 +48,20 @@ if BACKEND=='opencode':
  for k in ['XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_CACHE_HOME','XDG_STATE_HOME']:
   assert pathlib.Path(os.environ[k]).is_dir()
 manifest=json.loads(next(l.split(': ',1)[1] for l in prompt.splitlines() if l.startswith('TOOL_INPUT_MANIFEST: ')))
-if MODE=='error':
+if MODE=='error' or MODE=='error_review' and (folder/'proposal.json').is_file():
  print(json.dumps({'type':'error','error':{'name':'APIError','data':{'statusCode':401,'message':'Invalid key '+os.environ['OPENAI_API_KEY']}}}));sys.exit(1)
+if MODE=='stderr_error':
+ print('HTTP 401 Unauthorized: Incorrect API key provided: '+os.environ['OPENAI_API_KEY'],file=sys.stderr);sys.exit(1)
+if MODE in ('billing','rate_limit','billing_partial') or (
+ MODE=='billing_review' and (folder/'proposal.json').is_file()
+) or (MODE=='billing_identity' and folder.name=='identity_inputs') or (
+ MODE=='billing_extraction' and (folder/'scope.json').is_file() and not (folder/'proposal.json').exists()
+):
+ if MODE=='billing_partial':
+  print(json.dumps({'type':'step_start','part':{'id':'started'}}))
+ message='Rate limit exceeded' if MODE=='rate_limit' else 'You have no credits remaining. Add credits.'
+ print(json.dumps({'type':'error','error':{'name':'APIError','data':{
+  'statusCode':429,'isRetryable':True,'message':message}}}));sys.exit(1)
 if BACKEND=='opencode':print(json.dumps({'type':'step_start','part':{'id':'start','messageID':'m'}}))
 for i,item in enumerate(manifest['required_image_reads']):
  p=pathlib.Path(item['file_path']);p.read_bytes()
@@ -82,13 +97,15 @@ else:print(json.dumps({'type':'result','is_error':False,'structured_output':outp
 
 
 def test_central_selection_and_environment_precedence(monkeypatch):
-    from facade_dspy.model import resolve_model,DEFAULT_MODELS
-    assert resolve_model().backend=='claude-code'
-    assert resolve_model().model==DEFAULT_MODELS['claude-code']
+    from facade_dspy.model import resolve_model
+    assert resolve_model().backend=='opencode'
+    assert resolve_model().model=='openai/gpt-6.1-sol'
     monkeypatch.setenv('FACADE_BACKEND','opencode')
-    monkeypatch.setenv('FACADE_MODEL','openai/gpt-5.4-mini')
+    monkeypatch.setenv('FACADE_MODEL','openai/configured-test-model')
     config=resolve_model()
     assert config.backend=='opencode' and config.api_key_env=='OPENAI_API_KEY'
+    assert config.model=='openai/configured-test-model'
+    assert resolve_model('opencode','openai/explicit-test-model').model=='openai/explicit-test-model'
     assert resolve_model('claude-code','sonnet').model=='sonnet'
     with pytest.raises(ValueError):resolve_model('opencode','anthropic/claude-sonnet-5-5')
     with pytest.raises(ValueError):resolve_model('missing-backend')
@@ -97,12 +114,14 @@ def test_central_selection_and_environment_precedence(monkeypatch):
 def test_project_dotenv_selects_opencode_without_constructing_live_backend(tmp_path,monkeypatch):
     import facade_dspy.program as program
     project=tmp_path/'project';(project/'facade_dspy').mkdir(parents=True)
-    (project/'.env').write_text('FACADE_BACKEND=opencode\nFACADE_MODEL=openai/gpt-5.4-mini\n',encoding='utf-8')
+    (project/'.env').write_text('OPENAI_API_KEY=offline-openai-fixture-not-a-real-key\n',encoding='utf-8')
     monkeypatch.setattr(program,'__file__',str(project/'facade_dspy/program.py'))
     monkeypatch.delenv('OPENAI_API_KEY',raising=False)
+    monkeypatch.delenv('PYTHON_DOTENV_DISABLED',raising=False)
     agent=program.FacadeExtractionAgent(index_only=True)
     assert agent.model_config.backend=='opencode'
-    assert agent.model=='openai/gpt-5.4-mini' and agent.backend is None
+    assert agent.model=='openai/gpt-6.1-sol' and agent.backend is None
+    assert os.environ.get('OPENAI_API_KEY')=='offline-openai-fixture-not-a-real-key'
 
 
 def test_opencode_missing_inputs_do_not_reserve_cost(tmp_path):
@@ -115,18 +134,24 @@ def test_opencode_missing_inputs_do_not_reserve_cost(tmp_path):
     assert not (tmp_path/'cost_ledger.json').exists()
 
 
-def test_opencode_missing_key_fails_before_starting_cli(tmp_path,monkeypatch):
+@pytest.mark.parametrize('value', [None, '  ', 'contains whitespace'])
+def test_opencode_missing_key_fails_before_starting_cli(tmp_path,monkeypatch,value):
     from facade_dspy.opencode_tool import OpenCode
-    monkeypatch.delenv('OPENAI_API_KEY',raising=False)
+    if value is None:
+        monkeypatch.delenv('OPENAI_API_KEY')
+    else:
+        monkeypatch.setenv('OPENAI_API_KEY', value)
     with pytest.raises(ValueError,match='OPENAI_API_KEY'):
         OpenCode(tmp_path,Budget(tmp_path,1,.5),command=['this-must-not-start.exe'],accept_estimates=True)
 
 
 @pytest.mark.parametrize('backend',['claude-code','opencode'])
-def test_switch_backends_preserves_shared_pipeline_and_outputs(tmp_path,backend):
+def test_switch_backends_preserves_shared_pipeline_and_outputs(tmp_path,backend,monkeypatch):
     pdf=pdf_file(tmp_path/'fixture.pdf',pages=1)
     command=fake_cli(tmp_path,'opencode' if backend=='opencode' else 'claude')
-    agent=FacadeExtractionAgent(out=tmp_path/'runs',backend=backend,command=command,
+    if backend=='opencode':
+        monkeypatch.setenv('OPENCODE_CONFIG_CONTENT', '{"model":"openai/stale-test-model"}')
+    agent=FacadeExtractionAgent(out=tmp_path/'runs',backend=None if backend=='opencode' else backend,command=command,
                                 budget_usd=1,accept_cli_estimates=True)
     result=agent(pdf_url=pdf.as_uri());run=Path(result.output_directory)
     assert result.coverage['complete_proposal_pages']==[1]
@@ -137,6 +162,10 @@ def test_switch_backends_preserves_shared_pipeline_and_outputs(tmp_path,backend)
         'OpenCode/OpenAI visual reading' if backend=='opencode' else 'Claude Code visual reading'}
     assert len(read(run/'data/relationships.json'))==2
     assert read(run/'model_selection.json')['backend']==backend
+    expected_model = 'openai/gpt-6.1-sol' if backend=='opencode' else 'claude-sonnet-5-5'
+    requests = [read(path) for path in (run/'raw_responses').glob('*.request.json')]
+    assert {request['task'] for request in requests} == {'identity', 'extraction', 'review'}
+    assert {request['model'] for request in requests} == {expected_model}
     assert read(run/'cost_summary.json')['reported_cost_usd']==pytest.approx(.05)
     for dataset in ['components','entities','relationships','measurements','table_rows']:
         for ext in ['json','parquet','csv']:assert (run/'data'/f'{dataset}.{ext}').exists()
@@ -150,7 +179,7 @@ def test_switch_backends_preserves_shared_pipeline_and_outputs(tmp_path,backend)
                               command=command,accept_cli_estimates=True)(pdf_url=pdf.as_uri())
 
 
-@pytest.mark.parametrize('mode',['ok','duplicate_finish','missing_read','wrong_path','missing_finish','unfinished_tail','bad_schema','malformed','length','error','zero_cost'])
+@pytest.mark.parametrize('mode',['ok','duplicate_finish','missing_read','wrong_path','missing_finish','unfinished_tail','bad_schema','malformed','length','error','stderr_error','zero_cost'])
 def test_opencode_protocol_cache_failures_and_costs(tmp_path,mode):
     from facade_dspy.opencode_tool import OpenCode
     folder=tmp_path/'inputs';folder.mkdir()
@@ -165,17 +194,83 @@ def test_opencode_protocol_cache_failures_and_costs(tmp_path,mode):
         assert backend.execute('extraction','Read all images',schema,folder)['cache_hit']
         assert len(read(tmp_path/'cost_ledger.json'))==1
     else:
-        with pytest.raises((ToolFailure,IncompleteRead)):
+        match = 'OpenAI authentication failed.*OPENAI_API_KEY' if mode in ('error', 'stderr_error') else None
+        with pytest.raises(ToolFailure, match=match):
             backend.execute('extraction','Read all images',schema,folder)
         assert not list((tmp_path/'tool_cache').glob('*.json'))
     assert (tmp_path/'raw_responses').is_dir()
-    assert list((tmp_path/'raw_responses').glob('*.read_validation.json'))
-    if mode in ['zero_cost','missing_finish','unfinished_tail','error']:
+    validation = read(next((tmp_path/'raw_responses').glob('*.read_validation.json')))
+    if mode in ('error', 'stderr_error'):
+        assert validation['status'] == 'authentication_error'
+    if mode in ['zero_cost','missing_finish','unfinished_tail','error','stderr_error']:
         assert budget.summary()['outstanding_reservations_usd']==.5
     else:assert budget.summary()['reported_cost_usd']==.01
     assert len(read(tmp_path/'cost_ledger.json'))==1
     for p in (tmp_path/'raw_responses').iterdir():
         assert 'offline-openai-fixture-not-a-real-key' not in p.read_text(encoding='utf-8')
+
+
+def test_opencode_auth_failure_during_review_reaches_the_caller(tmp_path):
+    pdf = pdf_file(tmp_path / 'fixture.pdf', pages=1)
+    agent = FacadeExtractionAgent(out=tmp_path / 'runs',
+        command=fake_cli(tmp_path, mode='error_review'),
+        model='openai/offline-test-model', budget_usd=1, accept_cli_estimates=True)
+    with pytest.raises(ToolFailure, match='OpenAI authentication failed.*OPENAI_API_KEY') as failure:
+        agent(pdf_url=pdf.as_uri())
+    assert 'offline-openai-fixture-not-a-real-key' not in str(failure.value)
+    assert not (agent.run / 'publication.json').exists()
+
+
+@pytest.mark.parametrize('mode,kind,held',[
+    ('billing','InsufficientCredits',0),
+    ('rate_limit','RateLimitFailure',0),
+    ('billing_partial','InsufficientCredits',.5),
+])
+def test_opencode_429_classification_and_reservations(tmp_path,mode,kind,held):
+    from facade_dspy.opencode_tool import OpenCode
+    folder=tmp_path/'inputs';folder.mkdir()
+    for name in ('source.png','focus.png'):(folder/name).write_bytes(b'image')
+    budget=Budget(tmp_path,1,.5)
+    backend=OpenCode(tmp_path,budget,command=fake_cli(tmp_path,mode=mode),accept_estimates=True)
+    with pytest.raises(ToolFailure) as failure:
+        backend.execute('extraction','Read images',{'type':'object'},folder)
+    assert type(failure.value).__name__==kind
+    assert budget.summary()['outstanding_reservations_usd']==held
+    assert len(read(budget.path))==1
+    if kind=='InsufficientCredits':
+        assert 'Add credits' in str(failure.value) and 'same PDF and --out' in str(failure.value)
+
+
+@pytest.mark.parametrize('mode,stage',[
+    ('billing_identity','document_identity'),
+    ('billing_extraction','region_extraction'),
+    ('billing_review','selected_source_verification'),
+])
+def test_billing_stops_run_and_next_invocation_resumes(tmp_path,mode,stage):
+    from facade_dspy.tool_protocol import InsufficientCredits
+    pdf=pdf_file(tmp_path/'fixture.pdf',pages=1)
+    options=dict(out=tmp_path/'runs',budget_usd=1,accept_cli_estimates=True)
+    first=FacadeExtractionAgent(**options,command=fake_cli(tmp_path,mode=mode))
+    with pytest.raises(InsufficientCredits):
+        first(pdf_url=pdf.as_uri())
+    run=first.run
+    before=read(run/'work'/'attempts.json')
+    failed=[a for a in before if a['status']=='failed']
+    assert len(failed)==1
+    jobs=read(run/'work'/'queue.json')['jobs']
+    assert next(j for j in jobs if j['id']==failed[0]['job_id'])['stage']==stage
+    assert not any(j['status']=='running' for j in jobs)
+    assert Budget(run,1,.5).summary()['outstanding_reservations_usd']==0
+
+    resumed=FacadeExtractionAgent(**options,command=fake_cli(tmp_path))
+    result=resumed(pdf_url=pdf.as_uri())
+    assert result.coverage['complete_proposal_pages']==[1]
+    after=read(run/'work'/'attempts.json')
+    for attempt in before:
+        assert attempt in after
+        if attempt['status']=='completed':
+            assert sum(a['job_id']==attempt['job_id'] for a in after)==1
+    assert [a['status'] for a in after if a['job_id']==failed[0]['job_id']]==['failed','completed']
 
 
 def test_both_entry_points_expose_backend_and_model():

@@ -73,7 +73,7 @@ class PageResult(Record):
     unresolved:list[str]
 
 
-def validate(result,n):
+def validate(result,n,drawing_patterns=None):
     obj=PageResult.model_validate(result)
     if obj.pdf_page!=n:
         raise ValueError('Wrong source page')
@@ -84,7 +84,8 @@ def validate(result,n):
     for node in obj.nodes:
         if node.detail_id not in details:
             raise ValueError(f'Unknown detail: {node.detail_id}')
-        if node.article_id and re.match(r'(?:geff|K\d{7}\b)',node.article_id,re.I):
+        if node.article_id and (re.match(r'(?:geff|K\d{7}\b)',node.article_id,re.I) if drawing_patterns is None else
+                                any(re.match(p+r'(?:\b|$)',node.article_id.strip(),re.I) for p in drawing_patterns)):
             raise ValueError('Drawing ID used as article')
     for rel in obj.relations:
         if rel.source not in nodes or rel.target not in nodes:

@@ -13,19 +13,22 @@ from .queue import WorkQueue
 from .source import acquire,index,make_units,split_unit,prepare_images
 from .schema import Identity,PageResult,VisualResult,VisualReview,validate
 from .normalize import normalize
+from . import manufacturers
 from .budget import Budget,BudgetStopped
-from .tool_protocol import IncompleteRead
+from .tool_protocol import AuthenticationFailure,IncompleteRead,InsufficientCredits,RateLimitFailure
+from .openai_retry_guard import BILLING
 from .model import resolve_model,make_backend_factory
 from .locking import exclusive_lock
 from .profiling import PipelineProfiler
+from .publication import publish,published_directory
 
 READING_RULES='''Read source.png and focus.png with the Read tool; native.txt is only a search aid.
 The focus image is a crop of the box in scope.json. Extract only entities whose source belongs
 to that box; use the full page for headers, units, legends and footnotes. Return boxes normalized
 to the FULL source.png, never to the crop. Read drawings directly, including outlined labels.
 Return source-language transcription separately; all descriptions and review questions must be English.
-Preserve article IDs exactly, including spaces. K plus seven digits and geff references are drawings,
-not articles. Local callouts and drawing numbers are separate namespaces. Keep component definitions,
+Preserve article IDs exactly, including spaces. Use the supplied manufacturer drawing rules.
+Local callouts and drawing numbers are separate namespaces. Keep component definitions,
 drawing instances, connections, machining features, tools and consumables distinct through node kind.
 Capture table headers with merged-header meaning, units, every readable row, footnotes and applicability.
 Encode applicability and alternatives in footnotes and relationship/instruction conditions.
@@ -55,6 +58,7 @@ def result_path(run,unit):return run/'proposals'/(objecthash(unit['unit_id'])[:2
 def existing_bundle(folder,source_sha):
     folder=Path(folder).resolve()
     if (folder/'outputs/document.json').exists():folder=folder/'outputs'
+    folder=published_directory(folder)
     doc=read(folder/'document.json')
     if doc.get('sha256',doc.get('source_sha256'))!=source_sha:raise ValueError('Saved results belong to a different source PDF')
     result={}
@@ -96,25 +100,28 @@ class FacadeExtractionAgent(dspy.Module):
         """Read one registered region, with full source context and isolated read-only tools."""
         unit=next(u for u in self.units if u['unit_id']==unit_id)
         folder=self.run/'tool_inputs'/objecthash(unit_id)[:20];self.profiling.call('image_preparation',prepare_images,self.run,unit,folder)
-        prompt=READING_RULES+'\nUNIT: '+json.dumps(unit)+'\nDOCUMENT: '+json.dumps(self.identity,ensure_ascii=False)
+        profile=self.manufacturer_pin['scope']['profile']
+        rules=dict(drawing_reference_patterns=profile['drawing_reference_patterns'],
+                   relationship_predicates=sorted(profile.get('relationship_predicates',{})))
+        prompt=READING_RULES+'\nMANUFACTURER RULES: '+json.dumps(rules)+'\nUNIT: '+json.dumps(unit)+'\nDOCUMENT: '+json.dumps(self.identity,ensure_ascii=False)
         reply=self.backend.execute('extraction',prompt,VisualResult.model_json_schema(),folder,self._heartbeat)
         visual=self.profiling.call('response_schema_validation',VisualResult.model_validate,reply['output'])
         if visual.unit_id!=unit_id:raise ValueError('Response belongs to a different region')
         value,repairs=self.profiling.call('normalization',normalize,visual.extraction.model_dump())
         # A drawing number can be retained as a drawing reference, never a component identity.
         for node in value['nodes']:
-            if node['article_id'] and re.fullmatch(r'(?:K\d{7}|geff[fpc]\d+)',node['article_id'],re.I):
+            if node['article_id'] and manufacturers.drawing_reference(node['article_id'],profile):
                 code=node['article_id'];node['article_id']=None;node['kind']='drawing_reference'
                 repairs['notes'].append('Drawing reference '+code+' removed from article field; original reply retained.')
                 next(d for d in value['details'] if d['id']==node['detail_id'])['drawing_refs'].append(code)
-        value=self.profiling.call('structural_validation',validate,value,unit['pdf_page'])
+        value=self.profiling.call('structural_validation',validate,value,unit['pdf_page'],profile['drawing_reference_patterns'])
         for span in visual.source_text:
             a,b,c,d=span.bbox
             if not 0<=a<=c<=1 or not 0<=b<=d<=1:raise ValueError('Invalid transcription locator')
         return dict(unit=unit,extraction=value,source_text=[s.model_dump() for s in visual.source_text],
             metadata=dict(source_sha256=self.source['source_sha256'],identity=self.identity,review_status='proposed',
                 method='OpenCode/OpenAI visual reading' if self.model_config.backend=='opencode' else 'Claude Code visual reading',
-                backend=self.model_config.backend,model=self.model,
+                backend=self.model_config.backend,model=self.model,manufacturer_profile_sha256=self.manufacturer_pin['profile_sha256'],
                 representation_repairs=repairs,tool_receipt=reply,bbox_precision='approximate full-page evidence locator; not CAD geometry'))
 
     def _review_visual(self,unit_id:str)->dict:
@@ -137,22 +144,24 @@ UNIT: '''+json.dumps(unit)
 
     def _identity(self,bundle):
         path=self.run/'identity.json'
-        if path.exists():
-            prior=read(path)
-            if self.backend is None or prior.get('evidence_pages') or any(prior.get(k) for k in ['manufacturer_brand','system_id','document_name']):return prior
         if bundle:
             doc=bundle[1];identity=dict(manufacturer_brand=doc.get('manufacturer_brand'),legal_manufacturer=doc.get('legal_manufacturer'),
-                system_id=doc.get('system_id'),document_name=doc.get('document_id',doc.get('source_document_id')),
-                edition=doc.get('edition'),copyright_notice=doc.get('copyright_notice'),evidence_pages=[],
-                unresolved=['Identity reused from a matching-hash saved manifest; no new visual identity verification.'])
+                system_id=doc.get('system_id'),document_name=doc.get('document_name',doc.get('document_id',doc.get('source_document_id'))),
+                edition=doc.get('edition'),copyright_notice=doc.get('copyright_notice'),evidence_pages=doc.get('evidence_pages',[]),
+                unresolved=doc.get('unresolved',[])+['Identity reused from a matching-hash saved manifest; no new visual identity verification.'])
             if not identity['manufacturer_brand'] or not identity['system_id']:
                 # Old full-worker metadata contains these fields when the early index manifest did not.
                 if bundle[2]:
                     saved=read(next(iter(bundle[2].values()))).get('_metadata',{})
                     for k in ['manufacturer_brand','system_id','edition']:
                         if not identity[k]:identity[k]=saved.get(k)
-            dump(path,identity);return identity
+            if path.exists() and read(path)!=identity:
+                raise ValueError('Saved identity changed; use a fresh replay directory')
+            if not path.exists():dump(path,identity)
+            return identity
         if self.backend is None:
+            committed=self.queue.committed_json('document:identity',path)
+            if committed is not None:return committed
             identity=Identity(manufacturer_brand=None,legal_manufacturer=None,system_id=None,document_name=None,
                 edition=None,copyright_notice=None,evidence_pages=[],unresolved=['Identity requires source inspection.']).model_dump()
             return identity
@@ -162,11 +171,8 @@ UNIT: '''+json.dumps(unit)
             [Path(__file__).with_name(name) for name in ['model.py','tool_protocol.py','schema.py',
              'opencode_tool.py' if self.model_config.backend=='opencode' else 'claude_tool.py']]+images,
                             [f'p{n:04}:index' for n in sorted({1,min(2,self.source['page_count']),self.source['page_count']})])
-        state=self.queue.db.execute('SELECT status FROM jobs WHERE id=?',(jid,)).fetchone()[0]
-        if state=='failed':
-            last=self.queue.db.execute('SELECT error FROM attempts WHERE job_id=? ORDER BY ordinal DESC LIMIT 1',(jid,)).fetchone()
-            if last and json.loads(last['error'] or '{}').get('type')=='BudgetStopped':self.queue.retry(jid);state='pending'
-        if state=='completed':return read(path)
+        state=self._resumable_job_state(jid)
+        if state=='completed':return self.queue.committed_json(jid,path)
         if state!='pending':raise ValueError('Identity job requires explicit recovery; inspect the saved failure')
         def inspect(spec):
             value=self.inspect_document();dump(path,value['identity']);receipt=self.run/'identity_tool_receipt.json';dump(receipt,value['tool_receipt'])
@@ -174,6 +180,20 @@ UNIT: '''+json.dumps(unit)
             if value['tool_receipt'].get('raw_response'):outputs.append(safe_path(self.run,value['tool_receipt']['raw_response']))
             return {'outputs':outputs,'new_api_cost_usd':0 if value['tool_receipt'].get('cache_hit') else value['tool_receipt'].get('reported_cost_usd',0)}
         self.queue.run(jid,inspect);return read(path)
+
+    def _resumable_job_state(self,jid):
+        state=self.queue.db.execute('SELECT status FROM jobs WHERE id=?',(jid,)).fetchone()[0]
+        if state=='failed':
+            last=self.queue.db.execute('SELECT error,status FROM attempts WHERE job_id=? ORDER BY ordinal DESC LIMIT 1',(jid,)).fetchone()
+            error=json.loads(last['error'] or '{}') if last and last['status']=='failed' else {}
+            kind=error.get('type')
+            message=error.get('message','')
+            if kind in ('BudgetStopped','InsufficientCredits','RateLimitFailure') or (
+                kind=='ToolFailure' and message.startswith('OpenCode error: ') and BILLING.search(message)
+            ):
+                self.queue.retry(jid)
+                return 'pending'
+        return state
 
     def _read_identity(self)->dict:
         """Inspect only the prepared cover/notice images; never trust the filename as identity."""
@@ -192,8 +212,8 @@ UNIT: '''+json.dumps(unit)
         elif read(path)!=unit:raise ValueError('A saved unit changed unexpectedly')
         jid=unit['unit_id']+':extract'
         self.queue.register(jid,'region_extraction',unit['unit_id'],[path,self.run/'index'/f'p{unit["pdf_page"]:04}.json',
-            self.run/'identity.json',Path(__file__)]+[Path(__file__).with_name(name) for name in
-            ['schema.py','normalize.py','source.py','claude_tool.py','opencode_tool.py','model.py','tool_protocol.py','budget.py','importer.py']]+
+            self.run/'identity.json',self.run/manufacturers.PROFILE_FILE,Path(__file__)]+[Path(__file__).with_name(name) for name in
+            ['schema.py','normalize.py','source.py','claude_tool.py','opencode_tool.py','model.py','tool_protocol.py','budget.py','importer.py','manufacturers.py']]+
             ([self.run/'model_selection.json'] if (self.run/'model_selection.json').exists() else []),
             [f'p{unit["pdf_page"]:04}:index'],{'scope':unit})
         return jid
@@ -224,12 +244,16 @@ UNIT: '''+json.dumps(unit)
         self.run=run;self.source=read(self.run/'source.json')
         self.queue=WorkQueue(self.run/'work');self.queue.recover()
         try:
+            source_sha=self.source['source_sha256']
+            manufacturers.read_pin(self.run,source_sha)
+            if self.profiling.call('checkpoint_audit',self.queue.audit,preserve=True):raise ValueError('Checkpoint inputs/outputs changed; preserve this run and inspect it before resuming')
             print('[local_index] started',flush=True)
             pages=self.profiling.call('local_index',index,self.run,self.queue)
             print('[local_index] completed:',len(pages),'pages',flush=True)
-            if self.profiling.call('checkpoint_audit',self.queue.audit):raise ValueError('Checkpoint inputs/outputs changed; preserve this run and inspect it before resuming')
-            bundle=existing_bundle(self.reuse,self.source['source_sha256']) if self.reuse else None
+            bundle=existing_bundle(self.reuse,source_sha) if self.reuse else None
             if self.replay and not bundle:raise ValueError('Replay requires a matching saved-results folder')
+            from .importer import import_pages,import_regions,snapshot_plan
+            replay_units=snapshot_plan(bundle[0]) if bundle else None
             if not self.replay and not self.index_only:
                 if self.cap is None:raise ValueError('Supply an explicit cumulative --budget-usd; no historic balance is assumed')
                 selection=self.run/'model_selection.json'
@@ -245,35 +269,51 @@ UNIT: '''+json.dumps(unit)
                 self.identity=Identity(manufacturer_brand=None,legal_manufacturer=None,system_id=None,document_name=None,
                     edition=None,copyright_notice=None,evidence_pages=[],unresolved=['Identity reading is blocked by the authorized budget.']).model_dump()
                 self.units=self.profiling.call('region_planning',make_units,self.run,pages);return self._finish('budget_stopped_during_identity')
-            self.units=self.profiling.call('region_planning',make_units,self.run,pages,set(bundle[2])|set(bundle[3]) if bundle else ())
+            if replay_units is None:
+                self.units=self.profiling.call('region_planning',make_units,self.run,pages,set(bundle[2])|set(bundle[3]) if bundle else ())
+            else:
+                plan=self.run/'units.json'
+                if not plan.exists():dump(plan,replay_units)
+                self.units=read(plan)
+                by_id={u['unit_id']:u for u in self.units}
+                if any(by_id.get(u['unit_id'])!=u for u in replay_units):
+                    raise ValueError('Saved replay scope changed; choose a fresh output directory')
             if not (self.run/'identity.json').exists():dump(self.run/'identity.json',self.identity)
             if self.index_only:return self._finish('indexed_only')
-            from .importer import import_pages
+            inherited=manufacturers.read_pin(bundle[0],source_sha) if bundle else None
+            prior_extraction=self.queue.db.execute(
+                "SELECT 1 FROM jobs WHERE stage='region_extraction' AND status IN ('completed','needs_review') LIMIT 1").fetchone()
+            self.manufacturer_pin=manufacturers.pin_scope(self.run,source_sha,self.identity,
+                                                          inherited=inherited,legacy=bool(bundle or prior_extraction))
+            profile_path=self.run/manufacturers.PROFILE_FILE
+            self.queue.register('document:manufacturer_profile','manufacturer_profile','document',
+                                [self.run/'source.json',profile_path])
+            if self.queue.committed_json('document:manufacturer_profile',profile_path) is None:
+                self.queue.run('document:manufacturer_profile',lambda spec:{'outputs':[profile_path],'new_api_cost_usd':0})
+            profile=self.manufacturer_pin['scope']['profile']
             for unit in self.units:self._seed(unit)
-            imported=self.profiling.call('saved_result_import',import_pages,self.run,bundle,self.source,self.identity,self.queue,self.units) if bundle else set()
+            if replay_units is not None:
+                self.profiling.call('saved_result_import',import_regions,self.run,bundle[0],self.source,profile,self.queue,self.units)
+            elif bundle:
+                self.profiling.call('saved_result_import',import_pages,self.run,bundle,self.source,self.identity,self.queue,self.units,profile)
             if self.replay:return self._finish('replayed_saved_results_no_model_calls')
             parents={u['parent'] for u in self.units if u['parent']}
             candidates=[u for u in self.units if not u['imported'] and u['unit_id'] not in parents]
             if self.pilot_pages:
-                candidates=[u for u in self.units if u['pdf_page'] in self.pilot_pages and u['unit_id'] not in parents]
-                if not candidates:raise ValueError('Pilot page selection does not match the document')
+                if not any(p['pdf_page'] in self.pilot_pages for p in pages):raise ValueError('Pilot page selection does not match the document')
+                candidates=[u for u in candidates if u['pdf_page'] in self.pilot_pages]
             else:
                 scores={p['pdf_page']:len(p['reference_candidates'])+min(len(p['native_text'])/1000,4)+(5 if p['table_candidates'] else 0)-
                         (100 if re.search(r'contents|drawing overview',p['native_text'][:600],re.I) else 0) for p in pages}
                 candidates=sorted(candidates,key=lambda u:-scores[u['pdf_page']])[:2]
             pilot={u['unit_id'] for u in candidates}
-            prior=read(self.run/'pilot_validation.json') if (self.run/'pilot_validation.json').exists() else {}
-            reviewed=set(prior.get('reviewed_units',[]))
+            reviewed=set()
             order=candidates+[u for u in self.units if u['unit_id'] not in pilot]
             position=0
             while position<len(order):
                 unit=order[position];position+=1;jid=self._seed(unit)
                 if unit['unit_id'] not in pilot and not pilot.issubset(reviewed):return self._finish('pilot_not_validated')
-                state=self.queue.db.execute('SELECT status FROM jobs WHERE id=?',(jid,)).fetchone()[0]
-                if state=='failed':
-                    last=self.queue.db.execute('SELECT error FROM attempts WHERE job_id=? ORDER BY ordinal DESC LIMIT 1',(jid,)).fetchone()
-                    if last and json.loads(last['error'] or '{}').get('type')=='BudgetStopped':
-                        self.queue.retry(jid);state='pending' # No generation was started on a budget refusal.
+                state=self._resumable_job_state(jid)
                 if state=='completed':pass
                 elif state in ['failed','stale']:
                     continue # Explicit recovery or valid cached replay is required; no blind paid retry.
@@ -287,6 +327,7 @@ UNIT: '''+json.dumps(unit)
                             return {'outputs':outputs,'new_api_cost_usd':0 if receipt.get('cache_hit') else receipt.get('reported_cost_usd',0),'review_status':'proposed'}
                         self.queue.run(jid,extract)
                     except BudgetStopped:return self._finish('budget_stopped')
+                    except (AuthenticationFailure,InsufficientCredits,RateLimitFailure):raise
                     except IncompleteRead:
                         children=split_unit(unit)
                         if children:
@@ -300,12 +341,8 @@ UNIT: '''+json.dumps(unit)
                     target=self.run/'reviews'/(objecthash(unit['unit_id'])[:24]+'.json');review_job=unit['unit_id']+':source_review'
                     self.queue.register(review_job,'selected_source_verification',unit['unit_id'],[result_path(self.run,unit),Path(__file__)],[jid],{'review_status':'model_check_not_human_approval'})
                     try:
-                        review_state=self.queue.db.execute('SELECT status FROM jobs WHERE id=?',(review_job,)).fetchone()[0]
-                        if review_state=='failed':
-                            last=self.queue.db.execute('SELECT error FROM attempts WHERE job_id=? ORDER BY ordinal DESC LIMIT 1',(review_job,)).fetchone()
-                            if last and json.loads(last['error'] or '{}').get('type')=='BudgetStopped':
-                                self.queue.retry(review_job);review_state='pending'
-                        if review_state=='completed':review=read(target)
+                        review_state=self._resumable_job_state(review_job)
+                        if review_state=='completed':review=self.queue.committed_json(review_job,target)
                         elif review_state in ['failed','stale']:return self._finish('pilot_review_requires_explicit_recovery')
                         else:
                             def check_source(spec):
@@ -316,6 +353,7 @@ UNIT: '''+json.dumps(unit)
                                 return {'outputs':outputs,'new_api_cost_usd':0 if receipt.get('cache_hit') else receipt.get('reported_cost_usd',0)}
                             self.queue.run(review_job,check_source);review=read(target)
                     except BudgetStopped:return self._finish('budget_stopped_during_pilot_review')
+                    except (AuthenticationFailure,InsufficientCredits,RateLimitFailure):raise
                     except Exception:return self._finish('pilot_review_failed')
                     if any(f['severity']=='error' for f in review['findings']):return self._finish('pilot_source_check_found_errors')
                     reviewed.add(unit['unit_id'])
@@ -326,8 +364,7 @@ UNIT: '''+json.dumps(unit)
             self.profiling.call('queue_snapshot',self.queue.snapshot);self.queue.db.close()
 
     def _finish(self,status):
-        from .exports import export
         print('[export] generating outputs:',status,flush=True)
         costs=self.budget.summary() if hasattr(self,'budget') else dict(reported_cost_usd=0,model_calls_this_run=0)
-        coverage=self.profiling.call('reconciliation_and_exports',export,self.run,self.units if hasattr(self,'units') else [],self.identity if hasattr(self,'identity') else {},status,costs,self.compare)
-        return dspy.Prediction(output_directory=str(self.run),coverage=coverage)
+        coverage,snapshot=self.profiling.call('reconciliation_and_exports',publish,self.run,self.queue,self.units,self.identity,status,costs,self.compare)
+        return dspy.Prediction(output_directory=str(self.run),snapshot_directory=str(snapshot),coverage=coverage)
