@@ -9,10 +9,10 @@ import time
 import uuid
 from .storage import dump,read,filehash,objecthash
 from .model import DEFAULT_MODELS
-from .tool_protocol import ToolFailure,IncompleteRead,redact
+from .tool_protocol import ToolFailure,IncompleteRead,redact,required_read_files
 
 
-def decode_events(text):
+def decode_events(text,folder=None):
     events=[]
     for line in text.splitlines():
         try:obj=json.loads(line)
@@ -24,7 +24,9 @@ def decode_events(text):
         message=e.get('message',e)
         for item in message.get('content',[]) if isinstance(message.get('content'),list) else []:
             if item.get('type')=='tool_use' and item.get('name')=='Read':
-                reads[item.get('id')]=Path(item.get('input',{}).get('file_path','')).name
+                path=Path(item.get('input',{}).get('file_path',''))
+                if path.name and (folder is None or (folder/path).resolve().parent==folder):
+                    reads[item.get('id')]=path.name
             if item.get('type')=='tool_result' and not item.get('is_error',False):success.add(item.get('tool_use_id'))
     return result,{reads[i] for i in success if i in reads},events
 
@@ -51,13 +53,14 @@ class ClaudeCode:
         folder=Path(folder).resolve()
         images={p.name:filehash(p) for p in folder.glob('*.png')}
         inputs={p.name:filehash(p) for p in folder.iterdir() if p.is_file()}
-        required=set(images) if task=='identity' else {'focus.png','source.png'}
-        if not images or required-set(images):
-            raise ToolFailure('Required tool input images are missing; no model process started: '+(', '.join(sorted(required-set(images))) or 'no PNG images supplied'))
+        required=required_read_files(task,images)
+        if not images or required-set(inputs):
+            raise ToolFailure('Required tool input files are missing; no model process started: '+(', '.join(sorted(required-set(inputs))) or 'no PNG images supplied'))
         manifest=dict(working_directory=str(folder),
             available_files=[dict(file_path=str(folder/name)) for name in sorted(inputs)],
-            required_image_reads=[dict(file_path=str(folder/name)) for name in sorted(required)])
-        prompt+='\nUse Read with the exact file_path values below. Read every required image before answering. Do not Read the directory or guess filenames.\nTOOL_INPUT_MANIFEST: '+json.dumps(manifest,ensure_ascii=False)
+            required_image_reads=[dict(file_path=str(folder/name)) for name in sorted(required&images.keys())],
+            required_reads=[dict(file_path=str(folder/name)) for name in sorted(required)])
+        prompt+='\nUse Read with the exact file_path values below. Read every required file before answering. Do not Read the directory or guess filenames.\nTOOL_INPUT_MANIFEST: '+json.dumps(manifest,ensure_ascii=False)
         payload=dict(task=task,prompt=prompt,schema=schema,inputs=inputs,model=self.model,version=self.version,
                      tool_policy='restricted Read only; bare; fresh session',cli_stop_usd=self.cli_budget,max_turns=6)
         request_hash=objecthash(payload);cache=self.run/'tool_cache'/f'{request_hash}.json'
@@ -102,7 +105,7 @@ class ClaudeCode:
             if proc and proc.poll() is None:proc.kill();stdout,stderr=proc.communicate()
             # Preserve incomplete replies before any parsing; redact token-like secrets in diagnostic text.
             raw.write_text(redact(stdout),encoding='utf-8');stderr_path.write_text(redact(stderr),encoding='utf-8')
-            result,successful_reads,events=decode_events(stdout)
+            result,successful_reads,events=decode_events(stdout,folder)
             if result:self.budget.settle(attempt,result)
             errors=[]
             for event in events:
@@ -114,8 +117,10 @@ class ClaudeCode:
             api_status=result.get('api_error_status') if result else None
             api_error=bool(result and (api_status or result.get('terminal_reason')=='api_error'))
             validation=rawdir/f'{attempt}.read_validation.json'
-            dump(validation,dict(required_image_files=sorted(required),successful_image_files=sorted(successful_reads),
-                missing_image_files=missing,tool_errors=errors,raw_response=raw.name,api_error_status=api_status,
+            dump(validation,dict(required_files=sorted(required),successful_files=sorted(successful_reads),
+                missing_files=missing,required_image_files=sorted(required&images.keys()),
+                successful_image_files=sorted(successful_reads&images.keys()),missing_image_files=sorted(set(missing)&images.keys()),
+                tool_errors=errors,raw_response=raw.name,api_error_status=api_status,
                 status='api_error' if api_error else 'rejected_unread_source' if missing else 'image_read_receipts_present_not_engineering_approval'))
         if api_error:
             reason=redact(str(result.get('result','Request rejected')))[:600]
@@ -124,10 +129,10 @@ class ClaudeCode:
             raise IncompleteRead('Incomplete Claude Code response retained: '+raw.name)
         output=result.get('structured_output')
         if not isinstance(output,dict):raise IncompleteRead('No structured output; raw response retained')
-        if missing:raise ToolFailure('Source image Read receipts missing: '+', '.join(missing)+'; inspect '+str(validation))
+        if missing:raise ToolFailure('Source file Read receipts missing: '+', '.join(missing)+'; inspect '+str(validation))
         reply=dict(output=output,raw_response='raw_responses/'+raw.name,request_hash=request_hash,
                    usage=result.get('usage'),model_usage=result.get('modelUsage'),reported_cost_usd=result.get('total_cost_usd'),
-                   successful_image_reads=sorted(successful_reads),model=self.model,cache_hit=False)
+                   successful_image_reads=sorted(successful_reads&images.keys()),model=self.model,cache_hit=False)
         reply['read_validation']='raw_responses/'+validation.name
         reply.update(raw_sha256=filehash(raw),output_sha256=objecthash(output))
         dump(cache,reply);return reply

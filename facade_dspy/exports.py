@@ -9,7 +9,7 @@ import pymupdf
 from .storage import read,dump,objecthash
 from .schema import validate
 from .publication import published_directory
-from . import manufacturers
+from . import rules
 
 STYLE='body{font:16px system-ui;line-height:1.5;max-width:1200px;margin:30px auto;padding:18px;color:#24374b}a{color:#006599}table{border-collapse:collapse;width:100%}td,th{padding:9px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}.scroll{overflow:auto}img{max-width:100%;height:auto}input{padding:12px;width:90%}.notice{padding:16px;background:#fff2cc}pre{white-space:pre-wrap;overflow-wrap:anywhere}'
 
@@ -31,8 +31,8 @@ def dataset(run,name,rows):
 
 
 def literal_article(value,kind,profile=None):
-    """Literal component article test; rules come from the manufacturer profile (default.json if none)."""
-    return manufacturers.literal_article(value,kind,profile or manufacturers.resolve({})['profile'])
+    """Literal component article test (generic rules; 'profile' is accepted for old callers and ignored)."""
+    return rules.literal_article(value,kind)
 
 
 WHOLE_PAGE=[0,0,1,1]
@@ -44,36 +44,41 @@ def _inside(box,scope,tolerance):
     return scope[0]-tolerance<=x<=scope[2]+tolerance and scope[1]-tolerance<=y<=scope[3]+tolerance
 
 
-def relationship_status(relation,source,target,disputed,profile=None,scope=None):
+def _no_locator(box):
+    return not box or box==WHOLE_PAGE or box[0]==box[2] or box[1]==box[3]
+
+
+def relationship_status(relation,source,target,disputed,profile=None,scope=None,verification='not_checked'):
     """Strict graph eligibility. Every relationship stays a proposal; only 'proposed' ones are graph-eligible.
 
-    invalid    – self reference, or an endpoint that is not a component (drawing ref, dimension, step ...)
-    unresolved – unrecognised predicate, unresolved endpoint, inferred basis, or evidence outside the region
+    invalid    – self reference, a non-component endpoint, or rejected by relationship verification
+    unresolved – unrecognised predicate, unresolved endpoint, inferred basis, no quoted evidence,
+                 evidence outside the region, or not (yet) confirmed by relationship verification
     disputed   – otherwise acceptable, but the model source check reported an error in this region
+    verification: 'supported' | 'unsupported' | 'uncertain' | 'missing', or 'not_checked' to skip that gate.
     """
-    profile=profile or manufacturers.resolve({})['profile']
-    excluded={k.casefold() for k in profile.get('relationship_endpoint_exclude_kinds',['drawing_reference','unresolved_reference'])}
     invalid=[];unresolved=[]
     if relation['source']==relation['target']:invalid.append('self_reference')
     for side,node in (('source',source),('target',target)):
         kind=(node.get('kind') or '').casefold()
         if kind=='unresolved_reference':unresolved.append(side+'_unresolved_reference')
-        elif kind in excluded:invalid.append(f'{side}_is_{kind}')
-    if manufacturers.canonical_predicate(relation['predicate'],profile) is None:unresolved.append('unrecognized_predicate')
-    if relation['basis'] not in ('explicit_text','drawing_reading'):unresolved.append('inferred_not_observed')
+        elif kind in rules.NON_COMPONENT_KINDS:invalid.append(f'{side}_is_{kind}')
+    if rules.canonical_predicate(relation['predicate']) is None:unresolved.append('unrecognized_predicate')
+    if relation['basis'] not in rules.OBSERVED_BASES:unresolved.append('inferred_not_observed')
+    if not (relation.get('evidence') or '').strip():unresolved.append('no_relationship_evidence')
     if scope is not None:
-        tolerance=profile.get('relationship_scope_tolerance',.02)
         box=relation.get('bbox')
-        if not box or box==WHOLE_PAGE or box[0]==box[2] or box[1]==box[3]:unresolved.append('no_evidence_locator')
-        elif not _inside(box,scope,tolerance):unresolved.append('evidence_outside_region')
+        if _no_locator(box):unresolved.append('no_evidence_locator')
+        elif not _inside(box,scope,rules.SCOPE_TOLERANCE):unresolved.append('evidence_outside_region')
         for side,node in (('source',source),('target',target)):
             box=node.get('bbox')
-            if not box or box==WHOLE_PAGE or box[0]==box[2] or box[1]==box[3]:
-                unresolved.append(side+'_no_evidence_locator')
-            elif not _inside(box,scope,tolerance):
-                unresolved.append(side+'_outside_region')
+            if _no_locator(box):unresolved.append(side+'_no_evidence_locator')
+            elif not _inside(box,scope,rules.SCOPE_TOLERANCE):unresolved.append(side+'_outside_region')
         if source.get('detail_id') and target.get('detail_id') and source['detail_id']!=target['detail_id']:
             unresolved.append('endpoints_in_different_details')
+    if verification=='unsupported':invalid.append('rejected_by_relationship_verification')
+    elif verification=='uncertain':unresolved.append('relationship_verification_uncertain')
+    elif verification=='missing':unresolved.append('relationship_not_verified')
     reasons=invalid+unresolved+(['model_source_check_reported_error'] if disputed else [])
     status='invalid' if invalid else 'unresolved' if unresolved else 'disputed' if disputed else 'proposed'
     return status,reasons
@@ -95,18 +100,21 @@ def occurrence_keys(items,content):
 
 def export(run,units,identity,status,costs,compare):
     source=read(run/'source.json');docid='pdf:'+source['source_sha256'];brand=identity.get('manufacturer_brand');system=identity.get('system_id')
-    pin=manufacturers.read_pin(run,source['source_sha256'])
-    scope=pin['scope'] if pin else manufacturers.resolve(identity);profile=scope['profile']
-    # Unmatched brands keep the earlier case-folded keys, so existing canonical IDs do not change.
-    namespace=(scope['brand_key']+':'+scope['system_key']) if brand and system else docid+':unresolved_identity'
-    component_scope = ('system', scope['brand_key'], scope['system_key']) if brand and system else ('document', docid)
+    brand_key,system_key=rules.identity_keys(identity)
+    # Case, spacing and legal-form suffixes do not split a brand/system scope.
+    namespace=(brand_key+':'+system_key) if brand_key and system_key else docid+':unresolved_identity'
+    component_scope = ('system', brand_key, system_key) if brand_key and system_key else ('document', docid)
+    verdicts={}
+    for path in (run/'verifications').glob('*.json'):
+        check=read(path)
+        verdicts[check['unit_id']]=check['verdicts']
     disputed_units={read(p)['unit_id'] for p in (run/'reviews').glob('*.json') if any(f['severity']=='error' for f in read(p)['findings'])}
     registry=defaultdict(list);entities=[];details=[];relations=[];measurements=[];tables=[];rows=[];instructions=[];questions=[];transcription=[];crops=[];records={};crop_plans=[]
     for path in sorted((run/'proposals').glob('*.json')):
         record=read(path);unit=record['unit'];uid=unit['unit_id'];n=unit['pdf_page']
         if record.get('metadata',{}).get('source_sha256')!=source['source_sha256']:raise ValueError('Proposal belongs to a different source PDF')
         if uid not in {u['unit_id'] for u in units}:raise ValueError('Proposal belongs to an unknown unit')
-        value=validate(record['extraction'],n,profile['drawing_reference_patterns']);records[uid]=record
+        value=validate(record['extraction'],n);records[uid]=record
         index=read(run/'index'/f'p{n:04}.json')
         def provenance(box):return dict(manufacturer_brand=brand,system_id=system,document_id=docid,edition=identity.get('edition'),
             source_sha256=source['source_sha256'],pdf_page=n,printed_page=index['printed_page'],region_id=uid,bbox=box,
@@ -118,29 +126,52 @@ def export(run,units,identity,status,costs,compare):
         for d in value['details']:
             details.append(dict(**d,detail_id=scoped(d['id']),canonical_id=detail_keys[d['id']],record_class='synthetic_review_bucket' if 'review bucket' in d['title'].casefold() else 'source_detail',provenance=provenance(d['bbox'])))
         node_map={v['id']:v for v in value['nodes']}
+        # Grounding: a component article ID must appear in text read from this page (model transcription,
+        # native PDF text or table cells). Without any such text the check is unavailable, not failed.
+        evidence_texts=[s['text'] for s in record.get('source_text',[])]+[index.get('native_text') or '']
+        evidence_texts.extend(ref for t in value['tables'] for row in t['rows']
+            for header,cell in zip(t['columns'],row['cells']) if cell and rules.article_column(header)
+            for ref in rules.table_articles(cell)[0])
+        can_ground=any(x.strip() for x in evidence_texts)
+        node_status={}
         for node in value['nodes']:
-            kind=node['kind'].casefold();article=node['article_id'];valid=literal_article(article,kind,profile)
-            article_id_key=manufacturers.article_key(article,profile) if valid else None
-            article_status=None if not article else 'literal_component_article' if valid else 'drawing_reference' if manufacturers.drawing_reference(article,profile) else 'unparsed_article_label'
+            kind=node['kind'].casefold();article=node['article_id'];literal=literal_article(article,kind)
+            is_grounded=rules.grounded(article,evidence_texts) if literal and can_ground else None
+            valid=literal and is_grounded is not False
+            article_id_key=rules.article_key(article) if valid else None
+            article_status=(None if not article else 'literal_component_article' if valid else
+                'ungrounded_article' if literal else 'drawing_reference' if rules.drawing_reference(article) else 'unparsed_article_label')
+            if article and (not literal or is_grounded is not True):
+                node_status[node['id']]=('article_unparsed' if not literal else
+                    'article_ungrounded' if is_grounded is False else 'article_grounding_unavailable')
             category='tool' if any(s in kind for s in ['tool','jig']) else 'consumable' if any(s in kind for s in ['consumable','sealant','adhesive']) else 'fastener' if any(s in kind for s in ['screw','bolt','fastener']) else 'profile' if any(s in kind for s in ['mullion','transom','profile']) else 'unknown'
             cls='drawing_reference' if kind=='drawing_reference' else 'connection' if kind in ['connection','joint','assembly_connection'] else 'machining_feature' if not article and any(s in kind for s in ['hole','feature','machining','pattern']) else 'unresolved_reference' if 'unresolved' in kind else 'component_definition_reference' if 'definition' in kind or valid and 'reference' in kind else 'drawing_instance'
-            e=dict(**node,entity_id=scoped(node['id']),entity_class=cls,component_category=category,component_id=namespace+':'+article_id_key if valid else None,article_status=article_status,manufacturer_profile=scope['profile_id'],
+            e=dict(**node,entity_id=scoped(node['id']),entity_class=cls,component_category=category,component_id=namespace+':'+article_id_key if valid else None,article_status=article_status,article_grounded=is_grounded,
                 canonical_id=entity_keys[node['id']],canonical_detail_id=detail_keys[node['detail_id']],
                 canonical_component_id=canonical_id('component', *component_scope, article_id_key) if valid else None,
                 quantity_scope='observed illustration occurrence, not required installed quantity',provenance=provenance(node['bbox']))
             entities.append(e)
             if valid:registry[article_id_key].append(dict(kind=node['kind'],label=node['label'],material=node['material'],literal_article_id=article,canonical_entity_id=e['canonical_id'],provenance=e['provenance']))
-            elif article:questions.append(dict(category='unresolved_article_label',message=article,article_status=article_status,provenance=e['provenance']))
+            elif article:questions.append(dict(category='ungrounded_article' if article_status=='ungrounded_article' else 'unresolved_article_label',message=article,article_status=article_status,provenance=e['provenance']))
         relation_keys=occurrence_keys(value['relations'],lambda r:[r['source'],r['predicate'],r['target'],r['basis'],r['condition']])
-        for r,local in zip(value['relations'],relation_keys):
-            rel_status,reasons=relationship_status(r,node_map[r['source']],node_map[r['target']],uid in disputed_units,profile,unit['bbox'])
+        decisions=rules.relation_verdicts(value['relations'],verdicts.get(uid,[]))
+        for i,(r,local) in enumerate(zip(value['relations'],relation_keys)):
+            claim_id=rules.claim_id(i)
+            verdict=decisions.get(claim_id,'missing')
+            rel_status,reasons=relationship_status(r,node_map[r['source']],node_map[r['target']],uid in disputed_units,
+                                                   scope=unit['bbox'],verification=verdict)
+            for side in ('source','target'):
+                # An endpoint whose article ID is not printed on the page may be a hallucinated part.
+                if r[side] in node_status:
+                    reasons.append(side+'_'+node_status[r[side]])
+                    if rel_status in ('proposed','disputed'):rel_status='unresolved'
             if (record['metadata'].get('legacy_review_unavailable') or
                     record['metadata'].get('method')=='reuse_exact_source_hash; no model call'):
                 reasons.append('legacy_review_unavailable')
                 if rel_status=='proposed':rel_status='unresolved'
             if rel_status!='proposed':questions.append(dict(category='relationship_validation',message=f"{r['source']} -{r['predicate']}-> {r['target']}: {rel_status} ({', '.join(reasons)})",provenance=provenance(r['bbox'])))
             relations.append(dict(**r,source_node=scoped(r['source']),target_node=scoped(r['target']),
-                canonical_predicate=manufacturers.canonical_predicate(r['predicate'],profile),
+                claim_id=claim_id,canonical_predicate=rules.canonical_predicate(r['predicate']),verification=verdict,
                 relationship_status=rel_status,status_reasons=reasons,graph_eligible=rel_status=='proposed',human_confirmed=False,
                 canonical_id=key('relationship',*local),canonical_source_id=entity_keys[r['source']],canonical_target_id=entity_keys[r['target']],
                 source_article_id=node_map[r['source']]['article_id'],target_article_id=node_map[r['target']]['article_id'],provenance=provenance(r['bbox'])))
@@ -161,9 +192,9 @@ def export(run,units,identity,status,costs,compare):
                     canonical_id=key('table_row',t['id'],i),canonical_table_id=table_key,original_table_id=t['id'],
                     cells=row['cells'],footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
                 for col,cell in zip(t['columns'],row['cells']):
-                    if cell and manufacturers.article_column(col,profile):
-                        found,drawing_refs,leftover=manufacturers.table_articles(cell,profile)
-                        for ref in found:registry[manufacturers.article_key(ref,profile)].append(dict(kind='table_reference',label=' | '.join(c or 'Unknown' for c in row['cells']),material=None,
+                    if cell and rules.article_column(col):
+                        found,drawing_refs,leftover=rules.table_articles(cell)
+                        for ref in found:registry[rules.article_key(ref)].append(dict(kind='table_reference',label=' | '.join(c or 'Unknown' for c in row['cells']),material=None,
                                 literal_article_id=ref,headers=t['columns'],units=t['units'],footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
                         for ref in drawing_refs:questions.append(dict(category='drawing_reference_in_article_column',message=f'{col}: {ref}',provenance=provenance(row['bbox'])))
                         if leftover:questions.append(dict(category='unparsed_table_article_cell',message=f'{col}: {leftover}',provenance=provenance(row['bbox'])))
@@ -199,10 +230,10 @@ def export(run,units,identity,status,costs,compare):
         old=read(oldpath);old=old.get('components',[]) if isinstance(old,dict) else old
         first=old[0] if old else {}
         other_brand=doc.get('manufacturer_brand') or first.get('manufacturer_brand');other_system=doc.get('system_id') or first.get('system_id')
-        other=manufacturers.resolve(dict(manufacturer_brand=other_brand,system_id=other_system,legal_manufacturer=doc.get('legal_manufacturer')))
-        if not brand or not system or not other_brand or not other_system or scope['brand_key']!=other['brand_key'] or scope['system_key']!=other['system_key']:
+        other=rules.identity_keys(dict(manufacturer_brand=other_brand,system_id=other_system))
+        if not brand_key or not system_key or None in other or (brand_key,system_key)!=other:
             questions.append(dict(category='cross_document_scope',message='Manufacturer/system identity does not match or is unknown; no compatibility or component identity links created.',source_document=str(directory)));continue
-        by_id={manufacturers.article_key(c['article_id'],profile):c for c in old if c.get('article_id')}
+        by_id={rules.article_key(c['article_id']):c for c in old if c.get('article_id')}
         for c in components:
             if c['article_id'] in by_id:
                 previous=by_id[c['article_id']]
@@ -241,7 +272,7 @@ def export(run,units,identity,status,costs,compare):
         limitations=['Native text and region detection are retrieval aids.','Source boxes are approximate, not CAD geometry.',
                     'Model source checks are not human approval.','Material-string differences do not exhaust compatibility/geometry conflicts.'])
     dump(run/'coverage.json',coverage);dump(run/'cost_summary.json',costs)
-    dump(run/'document.json',dict(**source,**identity,manufacturer_profile=scope['profile_id'],
+    dump(run/'document.json',dict(**source,**identity,
         document_id=docid,sha256=source['source_sha256'],review_status='proposed',replay_manifest_version=1))
     dump(run/'components.json',components)
     dataset(run,'all_proposals',list(records.values()))
@@ -261,7 +292,7 @@ def export(run,units,identity,status,costs,compare):
             for t in value['tables']:t['id']=prefix+t['id']
             for instruction in value['instructions']:instruction['detail_id']=dmap[instruction['detail_id']]
             for key in ['details','nodes','relations','measurements','tables','instructions','unresolved']:merged[key].extend(value[key])
-        validate(merged,n,profile['drawing_reference_patterns'])
+        validate(merged,n)
         merged['_metadata']=dict(source_document_id=docid,source_sha256=source['source_sha256'],review_status='proposed',
             full_page_scope_basis='all planned leaf regions have validated proposals',unit_ids=[u['unit_id'] for u in page_units])
         dump(run/'full/pages'/f'p{n:04}.json',merged)

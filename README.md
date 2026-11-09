@@ -232,15 +232,39 @@ validation status, and any reasons. Use `data/graph_relationships.*` for eligibl
 engineering proposals and `data/relationships.*` to review every extracted
 edge. Graph eligibility does not imply human approval.
 
-A full extraction or replay pins the effective manufacturer profile, its version
-and hashes in `manufacturer_profile.json`. Configuration edits take effect in
-new workspaces. An existing workspace and a replay of its snapshot use the saved
-profile. Known legacy checkpoints keep their original commits and use a recorded
-built-in profile baseline when historical configuration was unavailable.
-Unexpected checkpoint or artifact changes stop resume without rewriting commits.
+### Extraction and validation rules
 
-Replay from a published run or snapshot preserves committed region proposals and
-source reviews, including partial and disputed regions. New snapshots include
+One generic rule set in `facade_dspy/rules.py` applies to every catalogue; there
+are no per-manufacturer profiles. It defines literal article IDs (variant suffixes
+such as `235 918-11.5` stay whole; dimensions such as `11.4mm` or `5 - 7 mm` are
+never components; `235 918` and `235918` share one component key), article columns
+in tables, drawing references, the controlled relationship vocabulary, and the
+brand/system keys (case, spacing and legal-form suffixes such as `LLC` are ignored).
+
+- **Whole-page drawing regions.** Drawing and detail pages are read as one region,
+  so callouts, leaders and the parts they point at stay together. Only text-dense
+  table pages are split into two bands. The reader gets the page (`source.png`,
+  about 2000 px) and a high-resolution view (`focus.png`, about 3200 px).
+- **Reading order.** The extraction prompt asks for a transcription first, then
+  details, components, tables, measurements and, last, relationships between the
+  components already listed. Each relationship needs `evidence` (the quoted text or
+  the leader/contact seen) and one of the defined predicates.
+- **Article grounding.** A component article ID must appear in the page's
+  transcription, native text or table cells. Otherwise it is `ungrounded_article`,
+  is not registered as a component, and is listed in `questions.json`.
+- **Relationship verification.** Every region with statically valid relationships
+  gets one extra check that confirms each relationship against the images
+  (`verifications/`). Only relationships that pass every static rule, have evidence,
+  connect grounded parts and are verified `supported` are graph-eligible.
+
+Old workspaces resume and replay unchanged. Checkpoints made while manufacturer
+profiles existed (with `manufacturer_profile.json` inputs) stay valid without them.
+Resuming an old run with a model configured verifies its existing relationships
+(one call per region with relationships). Unexpected checkpoint or artifact changes
+stop resume without rewriting commits.
+
+Replay from a published run or snapshot preserves committed region proposals,
+relationship verifications and source reviews, including partial and disputed regions. New snapshots include
 `replay_manifest.json` to detect changes to that evidence. Legacy page-only
 bundles can still be imported. Their edges remain ineligible when the original
 review evidence is unavailable.
@@ -374,6 +398,25 @@ Replace the placeholder hash and reviewer with the actual values.
 .\.venv\Scripts\python.exe -B -m facade_dspy.benchmark `
     --ground-truth '.\ground_truth.json' --predictions '.\path\to\run'
 ```
+
+Real labels for the ALUPCO 50 SG catalogue are in
+`evaluation/alupco_50sg_ground_truth.json`: page 15 (gasket/isolator table and the
+transom section: article IDs, table cells and two clearly drawn relationships) and
+page 13 (installation positions: no components and no relationships, to measure
+false positives). The labels are a visual transcription awaiting engineering review;
+dimensions are not labelled. Region IDs are `p0015:full` and `p0013:full` of the
+full catalogue, so score a run of the whole PDF (or of those pages at their
+original page numbers).
+
+Besides the exact metrics, `components` scores distinct component article IDs
+(from nodes and article columns), and `relationship_links` scores which parts are
+connected and how (article keys and canonical predicate), ignoring free-text
+detail titles, callouts and conditions. Article IDs compare by key, so `235 918`
+matches `235918`, and predicate synonyms match their canonical form.
+
+`evaluation/mock_alupco_pipeline.py` runs the whole pipeline on the real five-page
+ALUPCO subset with a fake reader (no network), including a billing interruption,
+resume, replay-stable exports and the ZIP archive.
 
 `--predictions` also accepts a snapshot directory or a saved
 `data/all_proposals.json` file. Repeat it for multiple catalogues. The scorer

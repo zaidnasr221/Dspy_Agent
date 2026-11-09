@@ -28,7 +28,7 @@ def test_graph_keys_connect_across_regions_and_keep_source_ids(tmp_path):
     entities = {row['canonical_id']: row for row in read(data / 'entities.json')}
     details = {row['canonical_id']: row for row in read(data / 'details.json')}
     components = {row['canonical_id'] for row in read(data / 'components.json')}
-    assert len(entities) == 8
+    assert len(entities) == 4 # two whole-page regions x two nodes
     assert entities.keys().isdisjoint(details)
     for entity in entities.values():
         assert details[entity['canonical_detail_id']]['id'] == entity['detail_id']

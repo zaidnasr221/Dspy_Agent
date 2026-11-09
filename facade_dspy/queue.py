@@ -13,13 +13,19 @@ def digest(path):
     with Path(path).open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
 
+# Inputs of the retired manufacturer-profile layer. Checkpoints that listed them stay valid without them.
+RETIRED_INPUTS=frozenset({'code:manufacturers.py','run:manufacturer_profile.json'})
+# Inputs added to region extraction after checkpoints already existed.
+ADDED_EXTRACTION_INPUTS=frozenset({'code:rules.py'})
+
+
 def compatible_spec(old,new):
-    old_refs,new_refs=old['inputs'].keys(),new['inputs'].keys()
+    old_refs=old['inputs'].keys()-RETIRED_INPUTS
+    new_refs=new['inputs'].keys()
     added=new_refs-old_refs
-    if old_refs-new_refs or (added and not (old['stage']=='region_extraction' and
-            added=={'code:manufacturers.py','run:manufacturer_profile.json'})):
+    if old_refs-new_refs or (added and not (old['stage']=='region_extraction' and added<=ADDED_EXTRACTION_INPUTS)):
         return False
-    if any(not compatible_code(ref,sha,new['inputs'][ref]) for ref,sha in old['inputs'].items()):
+    if any(not compatible_code(ref,sha,new['inputs'][ref]) for ref,sha in old['inputs'].items() if ref not in RETIRED_INPUTS):
         return False
     if not compatible_code('code:queue.py',old['worker_code_sha256'],new['worker_code_sha256']):
         return False
@@ -271,7 +277,7 @@ class WorkQueue:
             spec = json.loads(job['spec'])
             bad = (not compatible_code('code:queue.py',spec['worker_code_sha256'],digest(Path(__file__)))
                    or any(not self.path(p).exists() or not compatible_code(p,sha,digest(self.path(p)))
-                          for p,sha in spec['inputs'].items()))
+                          for p,sha in spec['inputs'].items() if p not in RETIRED_INPUTS))
             row = self.db.execute('SELECT id,checkpoint FROM attempts WHERE job_id=? ORDER BY ordinal DESC LIMIT 1', (job['id'],)).fetchone()
             if not row or not row['checkpoint'] or not self.path(row['checkpoint']).exists():
                 bad = True

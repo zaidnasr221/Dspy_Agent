@@ -7,7 +7,7 @@ $FacadeArchiveDirectory = Split-Path $FacadeArchive -Parent
 if (-not (Test-Path -LiteralPath $FacadeArchiveDirectory)) {
     New-Item -ItemType Directory -Path $FacadeArchiveDirectory | Out-Null
 }
-$FacadeSourceNames = @('facade_dspy', 'tests', 'schemas', 'examples', 'README.md', 'pyproject.toml', 'run.ps1', 'test_pdf_page.py', 'package_source.ps1', 'REUSED_CODE.json', 'VALIDATION_STATUS.json')
+$FacadeSourceNames = @('facade_dspy', 'tests', 'schemas', 'examples', 'evaluation', 'README.md', 'pyproject.toml', 'run.ps1', 'test_pdf_page.py', 'package_source.ps1', 'REUSED_CODE.json', 'VALIDATION_STATUS.json')
 $FacadeSourceFiles = foreach ($FacadeSourceName in $FacadeSourceNames) {
     $FacadeSourcePath = Join-Path $PSScriptRoot $FacadeSourceName
     if (Test-Path -LiteralPath $FacadeSourcePath) {

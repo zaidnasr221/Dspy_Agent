@@ -30,6 +30,7 @@ class Relation(Record):
     basis:Literal['explicit_text','drawing_reading','inference']
     condition:str|None
     bbox:list[float]=Field(min_length=4,max_length=4)
+    evidence:str|None=Field(default=None,description='What on the page shows this relation: quoted text, or the callout/leader/contact seen in the drawing.')
 
 class Measurement(Record):
     subject:str
@@ -154,3 +155,18 @@ class VisualReview(Record):
     unit_id:str
     findings:list[ReviewFinding]
     scope:str
+
+
+class RelationVerdict(Record):
+    claim_id:str|None=None
+    source:str
+    predicate:str
+    target:str
+    verdict:Literal['supported','unsupported','uncertain']
+    reason:str
+    bbox:list[float]=Field(min_length=4,max_length=4)
+
+
+class RelationCheck(Record):
+    unit_id:str
+    verdicts:list[RelationVerdict]

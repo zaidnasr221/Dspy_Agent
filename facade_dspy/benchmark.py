@@ -6,12 +6,13 @@ import re
 from pathlib import Path
 
 from .publication import published_directory
-from .manufacturers import read_pin
+from . import rules
 from .schema import validate
 from .storage import read
 
 
-METRICS = ('article_ids', 'dimensions', 'units', 'table_structure', 'table_cells', 'relationships')
+METRICS = ('article_ids', 'components', 'dimensions', 'units', 'table_structure', 'table_cells', 'relationships',
+           'relationship_links')
 
 
 def region_key(source_sha, page, unit_id, bbox):
@@ -29,7 +30,13 @@ def region_key(source_sha, page, unit_id, bbox):
 
 
 def observations(result):
-    """Use source semantics as match keys because model-local IDs can change."""
+    """Use source semantics as match keys because model-local IDs can change.
+
+    Article IDs compare by their registry key ('235 918' == '235918'); relationships compare by
+    canonical predicate ('fits_into' == 'inserted_into') and endpoint article keys. 'components'
+    counts distinct literal component article IDs from nodes and article columns of tables, which is
+    what the exported component registry is built from.
+    """
     values = {metric: Counter() for metric in METRICS}
 
     def add(metric, *fields):
@@ -40,14 +47,17 @@ def observations(result):
         for detail in result['details']
     }
     nodes = {}
+    endpoints = {}
     for node in result['nodes']:
         article = node['article_id']
         if article:
-            add('article_ids', article)
-            nodes[node['id']] = ['article', article, node['callout'], details[node['detail_id']]]
+            add('article_ids', rules.article_key(article))
+            nodes[node['id']] = ['article', rules.article_key(article), node['callout'], details[node['detail_id']]]
+            endpoints[node['id']] = ['article', rules.article_key(article)]
         else:
             nodes[node['id']] = ['unlabelled_article', node['kind'], node['label'],
                                  node['callout'], details[node['detail_id']]]
+            endpoints[node['id']] = ['part', node['kind'].casefold(), node['label'].casefold()]
     subjects = details | nodes
     for measurement in result['measurements']:
         anchor = (subjects[measurement['subject']], measurement['property'],
@@ -64,8 +74,21 @@ def observations(result):
                 add('table_cells', table['title'], row_index, column_index,
                     table['columns'][column_index - 1], value)
     for relation in result['relations']:
-        add('relationships', nodes[relation['source']], relation['predicate'],
+        predicate = rules.canonical_predicate(relation['predicate']) or relation['predicate']
+        add('relationships', nodes[relation['source']], predicate,
             nodes[relation['target']], relation['basis'], relation['condition'])
+        # Looser link view: which parts are connected and how, ignoring free-text detail titles,
+        # callouts, basis and conditions. Useful for comparing live model output with labels.
+        add('relationship_links', endpoints[relation['source']], predicate, endpoints[relation['target']])
+    components = {rules.article_key(node['article_id']) for node in result['nodes']
+                  if rules.literal_article(node['article_id'], node['kind'])}
+    for table in result['tables']:
+        for column_index, header in enumerate(table['columns']):
+            if rules.article_column(header):
+                for row in table['rows']:
+                    components.update(rules.article_key(a) for a in rules.table_articles(row['cells'][column_index])[0])
+    for article in sorted(components):
+        add('components', article)
     return values
 
 
@@ -78,7 +101,7 @@ def scores(tp, fp, fn):
     }
 
 
-def evaluate(ground_truth, proposals, *, profiles_by_source=None):
+def evaluate(ground_truth, proposals):
     if ground_truth.get('version') != 1 or not ground_truth.get('cases'):
         raise ValueError('Expected a version 1 ground-truth manifest with labeled cases')
     predictions = {}
@@ -106,11 +129,9 @@ def evaluate(ground_truth, proposals, *, profiles_by_source=None):
             raise ValueError(f'Duplicate labeled region in {case_id}')
         seen_ids.add(case_id)
         seen_regions.add(key)
-        profile=(profiles_by_source or {}).get(key[0],{})
-        patterns=profile.get('drawing_reference_patterns')
-        truth = observations(validate(expected, page, patterns))
+        truth = observations(validate(expected, page))
         available = key in predictions
-        predicted = observations(validate(predictions[key], page, patterns)) if available else {
+        predicted = observations(validate(predictions[key], page)) if available else {
             metric: Counter() for metric in METRICS
         }
         metrics = {}
@@ -138,26 +159,14 @@ def main():
                         help='Run directory, snapshot, or all_proposals JSON. Repeat for multiple documents.')
     args = parser.parse_args()
     proposals = []
-    profiles={}
     for path in args.predictions:
         if path.is_dir():
             path = published_directory(path) / 'data/all_proposals.json'
-        if path.name=='all_proposals.json' and path.parent.name=='data':
-            snapshot=path.parent.parent
-            document=snapshot/'document.json'
-            if document.is_file():
-                doc=read(document)
-                source_sha=doc.get('source_sha256',doc.get('sha256'))
-                pin=read_pin(snapshot,source_sha)
-                if pin:
-                    profile=pin['scope']['profile']
-                    if profiles.setdefault(source_sha,profile)!=profile:
-                        parser.error('Predictions for one source use conflicting manufacturer profiles')
         records = read(path)
         if not isinstance(records, list):
             parser.error(f'Expected a JSON list of proposal envelopes in {path}')
         proposals.extend(records)
-    print(json.dumps(evaluate(read(args.ground_truth), proposals,profiles_by_source=profiles), indent=2))
+    print(json.dumps(evaluate(read(args.ground_truth), proposals), indent=2))
 
 
 if __name__ == '__main__':

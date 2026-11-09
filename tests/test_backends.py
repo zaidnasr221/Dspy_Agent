@@ -63,7 +63,7 @@ if MODE in ('billing','rate_limit','billing_partial') or (
  print(json.dumps({'type':'error','error':{'name':'APIError','data':{
   'statusCode':429,'isRetryable':True,'message':message}}}));sys.exit(1)
 if BACKEND=='opencode':print(json.dumps({'type':'step_start','part':{'id':'start','messageID':'m'}}))
-for i,item in enumerate(manifest['required_image_reads']):
+for i,item in enumerate(manifest.get('required_reads',manifest['required_image_reads'])):
  p=pathlib.Path(item['file_path']);p.read_bytes()
  if MODE=='missing_read':continue
  actual=str(folder.parent/p.name) if MODE=='wrong_path' else str(p)
@@ -74,7 +74,8 @@ for i,item in enumerate(manifest['required_image_reads']):
   print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':str(i),'is_error':False,'content':'fixture'}]}}))
 if (folder/'scope.json').exists():
  unit=json.loads((folder/'scope.json').read_text())
- if (folder/'proposal.json').exists():output={'unit_id':unit['unit_id'],'findings':[],'scope':'Offline fixture, not engineering review'}
+ if (folder/'relations.json').exists():output={'unit_id':unit['unit_id'],'verdicts':[{'claim_id':c['claim_id'],'source':c['source'],'predicate':c['predicate'],'target':c['target'],'verdict':'supported','reason':'Offline fixture','bbox':c['bbox']} for c in json.loads((folder/'relations.json').read_text())]}
+ elif (folder/'proposal.json').exists():output={'unit_id':unit['unit_id'],'findings':[],'scope':'Offline fixture, not engineering review'}
  else:
   value=json.loads(pathlib.Path(__FIXTURE__).read_text());value['pdf_page']=unit['pdf_page']
   output={'unit_id':unit['unit_id'],'source_text':[],'extraction':value}
@@ -160,13 +161,15 @@ def test_switch_backends_preserves_shared_pipeline_and_outputs(tmp_path,backend,
     assert {e['article_id'] for e in read(run/'data/entities.json')}=={'A100','V100'}
     assert {e['provenance']['reading_method'] for e in read(run/'data/entities.json')}=={
         'OpenCode/OpenAI visual reading' if backend=='opencode' else 'Claude Code visual reading'}
-    assert len(read(run/'data/relationships.json'))==2
+    relations=read(run/'data/relationships.json')
+    assert len(relations)==1 # one whole-page region
+    assert relations[0]['verification']=='supported' and relations[0]['graph_eligible']
     assert read(run/'model_selection.json')['backend']==backend
     expected_model = 'openai/gpt-6.1-sol' if backend=='opencode' else 'claude-sonnet-5-5'
     requests = [read(path) for path in (run/'raw_responses').glob('*.request.json')]
-    assert {request['task'] for request in requests} == {'identity', 'extraction', 'review'}
+    assert {request['task'] for request in requests} == {'identity', 'extraction', 'relation_check', 'review'}
     assert {request['model'] for request in requests} == {expected_model}
-    assert read(run/'cost_summary.json')['reported_cost_usd']==pytest.approx(.05)
+    assert read(run/'cost_summary.json')['reported_cost_usd']==pytest.approx(.04)
     for dataset in ['components','entities','relationships','measurements','table_rows']:
         for ext in ['json','parquet','csv']:assert (run/'data'/f'{dataset}.{ext}').exists()
     assert (run/'review.html').is_file()

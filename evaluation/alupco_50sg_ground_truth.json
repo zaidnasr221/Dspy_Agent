@@ -1,0 +1,595 @@
+{
+  "version": 1,
+  "description": "Real ALUPCO 50 SG regions. Page 15: gasket/isolator table and transom section (article IDs, table cells, two clearly drawn relationships). Page 13: installation positions with no article IDs and no relationships, to measure false positives. Dimensions are not labelled.",
+  "cases": [
+    {
+      "id": "alupco-50sg-p15-full",
+      "reviewed_by": "Claude visual transcription of ALUPCO 50 SG catalogue pp. 13 and 15 (2026-11-09); engineering review pending",
+      "source_sha256": "d8173d47de9d732d527df7485aa3c0f1bbfcc4d6f5d7ebe6b7aea73ecd211e58",
+      "unit_id": "p0015:full",
+      "bbox": [
+        0,
+        0,
+        1,
+        1
+      ],
+      "expected": {
+        "pdf_page": 15,
+        "page_kind": "detail",
+        "details": [
+          {
+            "id": "gaskets",
+            "title": "Rubber gaskets & isolators",
+            "drawing_refs": [],
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          },
+          {
+            "id": "section",
+            "title": "Transom section",
+            "drawing_refs": [],
+            "bbox": [
+              0.22,
+              0.58,
+              0.85,
+              0.95
+            ]
+          }
+        ],
+        "nodes": [
+          {
+            "id": "t1",
+            "detail_id": "gaskets",
+            "article_id": "235 918-11.5",
+            "kind": "isolator",
+            "label": "Isolator",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          },
+          {
+            "id": "t2",
+            "detail_id": "gaskets",
+            "article_id": "235 918-14.5",
+            "kind": "isolator",
+            "label": "Isolator",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          },
+          {
+            "id": "t3",
+            "detail_id": "gaskets",
+            "article_id": "235 918-18.5",
+            "kind": "isolator",
+            "label": "Isolator",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          },
+          {
+            "id": "t4",
+            "detail_id": "gaskets",
+            "article_id": "235 918-20.5",
+            "kind": "isolator",
+            "label": "Isolator",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          },
+          {
+            "id": "t5",
+            "detail_id": "gaskets",
+            "article_id": "235 545",
+            "kind": "gasket",
+            "label": "Inner glazing gasket",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          },
+          {
+            "id": "t6",
+            "detail_id": "gaskets",
+            "article_id": "235 546",
+            "kind": "gasket",
+            "label": "Inner glazing gasket",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          },
+          {
+            "id": "t7",
+            "detail_id": "gaskets",
+            "article_id": "235 547",
+            "kind": "gasket",
+            "label": "Inner glazing gasket",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          },
+          {
+            "id": "t8",
+            "detail_id": "gaskets",
+            "article_id": "237 351",
+            "kind": "gasket",
+            "label": "Inner glazing gasket",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          },
+          {
+            "id": "dgu",
+            "detail_id": "section",
+            "article_id": null,
+            "kind": "glass",
+            "label": "Double glazed unit",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.4,
+              0.64,
+              0.44,
+              0.95
+            ]
+          },
+          {
+            "id": "spacer",
+            "detail_id": "section",
+            "article_id": "32476",
+            "kind": "glazing_spacer",
+            "label": "Glazing spacer",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.44,
+              0.67,
+              0.53,
+              0.72
+            ]
+          },
+          {
+            "id": "iso",
+            "detail_id": "section",
+            "article_id": "235918",
+            "kind": "isolator",
+            "label": "Isolator 235918 (20.5mm)",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.45,
+              0.77,
+              0.59,
+              0.8
+            ]
+          },
+          {
+            "id": "block",
+            "detail_id": "section",
+            "article_id": "32478",
+            "kind": "setting_block",
+            "label": "Glass support block",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.44,
+              0.76,
+              0.6,
+              0.78
+            ]
+          },
+          {
+            "id": "gasket",
+            "detail_id": "section",
+            "article_id": "235456",
+            "kind": "gasket",
+            "label": "Glazing gasket",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.56,
+              0.71,
+              0.6,
+              0.75
+            ]
+          },
+          {
+            "id": "backing",
+            "detail_id": "section",
+            "article_id": "235917",
+            "kind": "gasket",
+            "label": "Backing gasket",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.44,
+              0.77,
+              0.46,
+              0.81
+            ]
+          },
+          {
+            "id": "spandrel",
+            "detail_id": "section",
+            "article_id": "32477",
+            "kind": "profile",
+            "label": "Spandrel frame",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.46,
+              0.84,
+              0.5,
+              0.88
+            ]
+          },
+          {
+            "id": "transom",
+            "detail_id": "section",
+            "article_id": null,
+            "kind": "transom",
+            "label": "Transom",
+            "material": null,
+            "quantity": null,
+            "callout": null,
+            "bbox": [
+              0.55,
+              0.7,
+              0.8,
+              0.88
+            ]
+          }
+        ],
+        "relations": [
+          {
+            "source": "block",
+            "predicate": "supports",
+            "target": "dgu",
+            "basis": "drawing_reading",
+            "condition": null,
+            "bbox": [
+              0.44,
+              0.74,
+              0.6,
+              0.79
+            ],
+            "evidence": "Glass support block 32478 drawn directly under the double glazed unit"
+          },
+          {
+            "source": "gasket",
+            "predicate": "seals_against",
+            "target": "dgu",
+            "basis": "drawing_reading",
+            "condition": null,
+            "bbox": [
+              0.53,
+              0.7,
+              0.6,
+              0.76
+            ],
+            "evidence": "Glazing gasket 235456 drawn pressed against the inner glass face"
+          }
+        ],
+        "measurements": [],
+        "tables": [
+          {
+            "id": "gaskets_table",
+            "title": "Rubber gaskets & isolators",
+            "columns": [
+              "Art.-Nr.",
+              "Description",
+              "Size / glazing range"
+            ],
+            "units": [
+              null,
+              null,
+              null
+            ],
+            "rows": [
+              {
+                "cells": [
+                  "235 918-11.5",
+                  "Isolator",
+                  "11.4mm"
+                ],
+                "bbox": [
+                  0.12,
+                  0.23,
+                  0.88,
+                  0.58
+                ]
+              },
+              {
+                "cells": [
+                  "235 918-14.5",
+                  "Isolator",
+                  "14.5mm"
+                ],
+                "bbox": [
+                  0.12,
+                  0.23,
+                  0.88,
+                  0.58
+                ]
+              },
+              {
+                "cells": [
+                  "235 918-18.5",
+                  "Isolator",
+                  "18.5mm"
+                ],
+                "bbox": [
+                  0.12,
+                  0.23,
+                  0.88,
+                  0.58
+                ]
+              },
+              {
+                "cells": [
+                  "235 918-20.5",
+                  "Isolator",
+                  "20.5mm"
+                ],
+                "bbox": [
+                  0.12,
+                  0.23,
+                  0.88,
+                  0.58
+                ]
+              },
+              {
+                "cells": [
+                  "235 545",
+                  "Inner glazing gasket",
+                  "5 - 7 mm"
+                ],
+                "bbox": [
+                  0.12,
+                  0.23,
+                  0.88,
+                  0.58
+                ]
+              },
+              {
+                "cells": [
+                  "235 546",
+                  "Inner glazing gasket",
+                  "7 - 9 mm"
+                ],
+                "bbox": [
+                  0.12,
+                  0.23,
+                  0.88,
+                  0.58
+                ]
+              },
+              {
+                "cells": [
+                  "235 547",
+                  "Inner glazing gasket",
+                  "9 - 11 mm"
+                ],
+                "bbox": [
+                  0.12,
+                  0.23,
+                  0.88,
+                  0.58
+                ]
+              },
+              {
+                "cells": [
+                  "237 351",
+                  "Inner glazing gasket",
+                  "11 - 13 mm"
+                ],
+                "bbox": [
+                  0.12,
+                  0.23,
+                  0.88,
+                  0.58
+                ]
+              }
+            ],
+            "footnotes": [],
+            "bbox": [
+              0.12,
+              0.23,
+              0.88,
+              0.58
+            ]
+          }
+        ],
+        "instructions": [],
+        "unresolved": [
+          "Section dimensions (34, 22, 6, 8, 18, 28) are not labelled in this ground truth."
+        ]
+      }
+    },
+    {
+      "id": "alupco-50sg-p13-full",
+      "reviewed_by": "Claude visual transcription of ALUPCO 50 SG catalogue pp. 13 and 15 (2026-11-09); engineering review pending",
+      "source_sha256": "d8173d47de9d732d527df7485aa3c0f1bbfcc4d6f5d7ebe6b7aea73ecd211e58",
+      "unit_id": "p0013:full",
+      "bbox": [
+        0,
+        0,
+        1,
+        1
+      ],
+      "expected": {
+        "pdf_page": 13,
+        "page_kind": "instruction",
+        "details": [
+          {
+            "id": "positions",
+            "title": "Glass installation positions 1 to 7",
+            "drawing_refs": [],
+            "bbox": [
+              0.1,
+              0.18,
+              0.85,
+              0.95
+            ]
+          }
+        ],
+        "nodes": [],
+        "relations": [],
+        "measurements": [],
+        "tables": [],
+        "instructions": [
+          {
+            "detail_id": "positions",
+            "sequence": 1,
+            "text": "Position 1",
+            "condition": null,
+            "article_refs": [],
+            "bbox": [
+              0.1,
+              0.18,
+              0.85,
+              0.95
+            ]
+          },
+          {
+            "detail_id": "positions",
+            "sequence": 2,
+            "text": "Position 2",
+            "condition": null,
+            "article_refs": [],
+            "bbox": [
+              0.1,
+              0.18,
+              0.85,
+              0.95
+            ]
+          },
+          {
+            "detail_id": "positions",
+            "sequence": 3,
+            "text": "Position 3",
+            "condition": null,
+            "article_refs": [],
+            "bbox": [
+              0.1,
+              0.18,
+              0.85,
+              0.95
+            ]
+          },
+          {
+            "detail_id": "positions",
+            "sequence": 4,
+            "text": "Position 4",
+            "condition": null,
+            "article_refs": [],
+            "bbox": [
+              0.1,
+              0.18,
+              0.85,
+              0.95
+            ]
+          },
+          {
+            "detail_id": "positions",
+            "sequence": 5,
+            "text": "Position 5",
+            "condition": null,
+            "article_refs": [],
+            "bbox": [
+              0.1,
+              0.18,
+              0.85,
+              0.95
+            ]
+          },
+          {
+            "detail_id": "positions",
+            "sequence": 6,
+            "text": "Position 6",
+            "condition": null,
+            "article_refs": [],
+            "bbox": [
+              0.1,
+              0.18,
+              0.85,
+              0.95
+            ]
+          },
+          {
+            "detail_id": "positions",
+            "sequence": 7,
+            "text": "Position 7",
+            "condition": null,
+            "article_refs": [],
+            "bbox": [
+              0.1,
+              0.18,
+              0.85,
+              0.95
+            ]
+          }
+        ],
+        "unresolved": []
+      }
+    }
+  ]
+}

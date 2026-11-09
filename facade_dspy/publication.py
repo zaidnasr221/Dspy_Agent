@@ -6,7 +6,6 @@ import tempfile
 import uuid
 
 from .storage import dump, filehash, objecthash, read, safe_path
-from .manufacturers import PROFILE_FILE
 
 
 def published_directory(run):
@@ -70,14 +69,14 @@ def publish(run, queue, units, identity, status, costs, compare):
         if uid in parents:
             continue
         filename = objecthash(uid)[:24] + '.json'
-        for stage, directory in (('extract', 'proposals'), ('source_review', 'reviews')):
+        for stage, directory in (('extract', 'proposals'), ('source_review', 'reviews'), ('relation_check', 'verifications')):
             relative = Path(directory) / filename
             record = queue.committed_json(uid + ':' + stage, run / relative)
             if record is None:
                 continue
             if stage == 'extract' and record['unit'] != unit:
                 raise ValueError(f'Committed proposal scope changed for {uid}')
-            if stage == 'source_review' and record['unit_id'] != uid:
+            if stage in ('source_review', 'relation_check') and record['unit_id'] != uid:
                 raise ValueError(f'Committed review scope changed for {uid}')
             dump(snapshot / relative, record)
             original = record.get('metadata', {}).get('original_proposal')
@@ -89,13 +88,13 @@ def publish(run, queue, units, identity, status, costs, compare):
                 if receipt.get(field):
                     raw = safe_path(run, receipt[field])
                     copy_file(raw, snapshot / raw.relative_to(run))
-    for name in ('model_selection.json', 'cost_ledger.json', 'units.json', 'pilot_validation.json', PROFILE_FILE):
+    for name in ('model_selection.json', 'cost_ledger.json', 'units.json', 'pilot_validation.json'):
         if (run / name).is_file():
             copy_file(run / name, snapshot / name)
     coverage = export(snapshot, units, identity, status, costs, compare)
-    files = [snapshot / name for name in ('document.json', 'units.json', PROFILE_FILE)
+    files = [snapshot / name for name in ('document.json', 'units.json')
              if (snapshot / name).is_file()]
-    for directory in ('proposals', 'reviews', 'imported_originals', 'raw_responses'):
+    for directory in ('proposals', 'reviews', 'verifications', 'imported_originals', 'raw_responses'):
         files.extend(p for p in (snapshot / directory).rglob('*') if p.is_file())
     dump(snapshot / 'replay_manifest.json', dict(version=1,
         files={p.relative_to(snapshot).as_posix(): filehash(p) for p in sorted(files)}))

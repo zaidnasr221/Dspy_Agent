@@ -17,7 +17,7 @@ def test_replay_preserves_disputed_committed_region_and_review(tmp_path):
                                    replay=True)(pdf_url=pdf.as_uri())
     snapshot = Path(replay.snapshot_directory)
     assert replay.coverage['completed_region_proposals']==1
-    assert replay.coverage['complete_proposal_pages']==[]
+    assert replay.coverage['complete_proposal_pages']==[1] # the pilot page is one whole-page region
     source_reviews=list((original/'reviews').glob('*.json'))
     assert source_reviews
     for review in source_reviews:
@@ -35,31 +35,67 @@ def test_replay_preserves_disputed_committed_region_and_review(tmp_path):
                               replay=True)(pdf_url=pdf.as_uri())
 
 
-def test_run_keeps_pinned_profile_on_resume_and_replay(tmp_path,monkeypatch):
+def test_resume_and_replay_keep_results_and_relationship_checks(tmp_path):
     pdf=pdf_file(tmp_path/'fixture.pdf')
     calls=[]
     def run():
         return FacadeExtractionAgent(out=tmp_path/'live',budget_usd=1,
             backend_factory=lambda r,b: FakeBackend(calls))(pdf_url=pdf.as_uri())
     original=run()
-    run_path=Path(original.output_directory)
-    pin=read(run_path/'manufacturer_profile.json')
-    assert pin['version']==pin['profile_version']==1 and len(pin['scope_sha256'])==64
-    assert len(pin['profile_sha256'])==64
-    extra=tmp_path/'profiles'
-    dump(extra/'demo.json',{'id':'demo','article_patterns':[r'ZZ\d+']})
-    monkeypatch.setenv('FACADE_MANUFACTURER_DIR',str(extra))
+    assert not (Path(original.output_directory)/'manufacturer_profile.json').exists()
+    before=list(calls)
+    resumed=run()
+    assert calls==before # no model call on resume
+    snapshot=Path(resumed.snapshot_directory)
+    assert list((snapshot/'verifications').glob('*.json'))
+    replay=FacadeExtractionAgent(out=tmp_path/'replay',reuse=resumed.output_directory,
+                                  replay=True)(pdf_url=pdf.as_uri())
+    replayed=Path(replay.snapshot_directory)
+    assert calls==before
+    for name in ('components','relationships','graph_relationships'):
+        assert read(replayed/f'data/{name}.json')==read(snapshot/f'data/{name}.json')
+    assert all(r['graph_eligible'] and r['verification']=='supported' for r in read(replayed/'data/relationships.json'))
+
+
+def test_checkpoints_from_the_profile_era_resume_without_new_model_calls(tmp_path):
+    """Region jobs committed while manufacturer profiles existed listed manufacturers.py and the pin file."""
+    import json
+    from facade_dspy.queue import WorkQueue
+    from facade_dspy.storage import objecthash
+    pdf=pdf_file(tmp_path/'fixture.pdf')
+    calls=[]
+    def run():
+        return FacadeExtractionAgent(out=tmp_path/'live',budget_usd=1,
+            backend_factory=lambda r,b: FakeBackend(calls))(pdf_url=pdf.as_uri())
+    run_path=Path(run().output_directory)
+    dump(run_path/'manufacturer_profile.json',{'version':1,'retired':True})
+    queue=WorkQueue(run_path/'work')
+    try:
+        for row in queue.db.execute("SELECT id,spec FROM jobs WHERE stage='region_extraction'").fetchall():
+            spec=json.loads(row['spec'])
+            spec['inputs'].pop('code:rules.py')
+            spec['inputs'].update({'code:manufacturers.py':'0'*64,'run:manufacturer_profile.json':'1'*64})
+            encoded=json.dumps(spec,sort_keys=True)
+            import hashlib
+            queue.db.execute('UPDATE jobs SET spec=?,spec_hash=? WHERE id=?',(encoded,hashlib.sha256(encoded.encode()).hexdigest(),row['id']))
+            checkpoint=queue.db.execute('SELECT checkpoint FROM attempts WHERE job_id=? ORDER BY ordinal DESC LIMIT 1',(row['id'],)).fetchone()[0]
+            receipt=read(queue.path(checkpoint));receipt['spec']=spec;dump(queue.path(checkpoint),receipt)
+        # Keep dependents' receipts consistent with the rewritten checkpoints, as in a real historical run.
+        from facade_dspy.queue import digest
+        for row in queue.db.execute("SELECT job_id,checkpoint FROM attempts WHERE status='completed'").fetchall():
+            receipt=read(queue.path(row['checkpoint']))
+            for dep in receipt.get('dependency_checkpoint_hashes',{}):
+                latest=queue.db.execute("SELECT checkpoint FROM attempts WHERE job_id=? AND status='completed' ORDER BY ordinal DESC LIMIT 1",(dep,)).fetchone()[0]
+                receipt['dependency_checkpoint_hashes'][dep]=digest(queue.path(latest))
+            dump(queue.path(row['checkpoint']),receipt)
+        queue.db.commit()
+        assert queue.audit(preserve=True)==[]
+    finally:
+        queue.db.close()
     before=list(calls)
     resumed=run()
     assert calls==before
-    assert read(Path(resumed.snapshot_directory)/'manufacturer_profile.json')==pin
-    replay=FacadeExtractionAgent(out=tmp_path/'replay',reuse=resumed.output_directory,
-                                  replay=True)(pdf_url=pdf.as_uri())
-    assert read(Path(replay.snapshot_directory)/'manufacturer_profile.json')==pin
-    assert read(Path(replay.snapshot_directory)/'data/components.json')==read(Path(resumed.snapshot_directory)/'data/components.json')
-    dump(run_path/'manufacturer_profile.json',dict(pin,profile_sha256='0'*64))
-    with pytest.raises(ValueError,match='Manufacturer profile'):
-        run()
+    assert resumed.coverage['complete_proposal_pages']==[1,2]
 
 
 def test_replay_legacy_proposals_without_reviews_are_ineligible(tmp_path):
@@ -98,15 +134,13 @@ def test_checkpoint_audit_can_refuse_changed_inputs_without_losing_commit(tmp_pa
 
 
 def test_alupco_system_and_numeric_first_ids():
-    from facade_dspy import manufacturers
-    compact=manufacturers.resolve({'manufacturer_brand':'ALUPCO','system_id':'50SG'})
-    spaced=manufacturers.resolve({'manufacturer_brand':'ALUPCO','system_id':'50 SG'})
-    assert compact['system_key']==spaced['system_key']
-    profile=compact['profile']
-    assert manufacturers.literal_article('50SG02','gasket',profile)
-    assert manufacturers.table_articles('50SG01 / 50SG02',profile)==(['50SG01','50SG02'],[],'')
-    assert not manufacturers.literal_article('Transom','profile',profile)
-    assert not manufacturers.literal_article('P001','position',profile)
+    from facade_dspy import rules
+    assert rules.identity_keys({'manufacturer_brand':'ALUPCO','system_id':'50SG'})==rules.identity_keys(
+        {'manufacturer_brand':'Alupco LLC','system_id':'50 SG'})==('alupco','50sg')
+    assert rules.literal_article('50SG02','gasket')
+    assert rules.table_articles('50SG01 / 50SG02')==(['50SG01','50SG02'],[],'')
+    assert not rules.literal_article('Transom','profile')
+    assert not rules.literal_article('P001','position')
 
 
 def test_full_page_placeholder_evidence_is_ineligible():
@@ -117,7 +151,7 @@ def test_full_page_placeholder_evidence_is_ineligible():
     assert status=='unresolved' and 'no_evidence_locator' in reasons
 
 
-def test_benchmark_respects_manufacturer_drawing_patterns():
+def test_benchmark_rejects_drawing_references_as_articles():
     from facade_dspy.benchmark import evaluate
     from test_benchmark import inputs
 
@@ -126,5 +160,3 @@ def test_benchmark_respects_manufacturer_drawing_patterns():
     prediction['extraction']['nodes'][0]['article_id']='K1013900'
     with pytest.raises(ValueError,match='Drawing ID'):
         evaluate(truth,[prediction])
-    report=evaluate(truth,[prediction],profiles_by_source={'a'*64:{'drawing_reference_patterns':[r'DRG-\d+']}})
-    assert report['metrics']['relationships']['f1']==1

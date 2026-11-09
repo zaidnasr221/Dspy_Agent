@@ -8,6 +8,17 @@ class AuthenticationFailure(ToolFailure):pass
 class InsufficientCredits(ToolFailure):pass
 class RateLimitFailure(ToolFailure):pass
 
+
+def required_read_files(task,images):
+    if task=='identity':
+        return set(images)
+    required={'source.png','focus.png'}
+    if task=='review':
+        required.add('proposal.json')
+    elif task=='relation_check':
+        required.add('relations.json')
+    return required
+
 def redact(text):
     for name in ('OPENAI_API_KEY','ANTHROPIC_API_KEY'):
         key=os.environ.get(name)

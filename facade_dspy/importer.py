@@ -1,6 +1,6 @@
 """Replay published regions and their committed reviews, with a legacy page fallback."""
 from .storage import dump,read,objecthash,filehash,safe_path
-from .schema import validate, VisualReview
+from .schema import validate, VisualReview, RelationCheck
 from .publication import copy_file
 
 
@@ -10,7 +10,7 @@ def snapshot_plan(folder):
         manifest=read(manifest_path)
         if manifest.get('version')!=1 or not {'units.json','document.json'}<=manifest['files'].keys():
             raise ValueError('Invalid replay manifest')
-        files={p.relative_to(folder).as_posix() for directory in ('proposals','reviews','imported_originals','raw_responses')
+        files={p.relative_to(folder).as_posix() for directory in ('proposals','reviews','verifications','imported_originals','raw_responses')
                for p in (folder/directory).rglob('*') if p.is_file()}
         if not files<=manifest['files'].keys():
             raise ValueError('Replay evidence is outside the snapshot manifest')
@@ -19,6 +19,7 @@ def snapshot_plan(folder):
             if not path.is_file() or filehash(path)!=sha:
                 raise ValueError(f'Snapshot replay integrity check failed: {ref}')
     else:
+        # manufacturer_profile.json marks snapshots from the retired profile era; those always carry a manifest.
         if (folder/'manufacturer_profile.json').is_file() or read(folder/'document.json').get('replay_manifest_version'):
             raise ValueError('Published replay manifest is missing')
         if folder.parent.name!='snapshots' or not (folder/'units.json').is_file():
@@ -30,7 +31,7 @@ def snapshot_plan(folder):
     parents={u['parent'] for u in units if u['parent']}
     names={objecthash(uid)[:24]+'.json' for uid in ids-parents}
     proposals={p.name for p in (folder/'proposals').glob('*.json')}
-    reviews={p.name for p in (folder/'reviews').glob('*.json')}
+    reviews={p.name for p in (folder/'reviews').glob('*.json')}|{p.name for p in (folder/'verifications').glob('*.json')}
     if not reviews<=proposals<=names:
         raise ValueError('Snapshot review or proposal is missing its source region')
     return [dict(u,imported=objecthash(u['unit_id'])[:24]+'.json' in proposals) for u in units]
@@ -50,7 +51,7 @@ def copy_receipt(folder,run,receipt):
             for key in ('raw_response','read_validation') if receipt.get(key)]
 
 
-def import_regions(run,folder,source,profile,queue,units):
+def import_regions(run,folder,source,queue,units,profile=None):
     from .program import result_path
     for unit in units:
         if not unit['imported']:
@@ -62,7 +63,7 @@ def import_regions(run,folder,source,profile,queue,units):
         if (dict(record['unit'],imported=True)!=unit or
                 record['metadata']['source_sha256']!=source['source_sha256']):
             raise ValueError(f'Replay proposal provenance changed for {uid}')
-        validate(record['extraction'],unit['pdf_page'],profile['drawing_reference_patterns'])
+        validate(record['extraction'],unit['pdf_page'])
         archive=copy_evidence(original,run/'imported_originals'/'regions'/target.name)
         metadata=record['metadata']
         evidence=copy_receipt(folder,run,metadata.get('tool_receipt',{}))
@@ -74,28 +75,31 @@ def import_regions(run,folder,source,profile,queue,units):
                 dump(target,record)
                 return {'outputs':[target,archive,*evidence],'new_api_cost_usd':0,'method':'replay_snapshot_region'}
             queue.run(jid,save)
-        review_source=folder/'reviews'/target.name
-        if not review_source.is_file():
-            continue
-        review=read(review_source)
-        fields={key:review[key] for key in VisualReview.model_fields}
-        if VisualReview.model_validate(fields).unit_id!=uid:
-            raise ValueError(f'Replay review belongs to another region: {uid}')
-        review_archive=copy_evidence(review_source,run/'imported_originals'/'reviews'/target.name)
-        review_evidence=copy_receipt(folder,run,review.get('tool_receipt',{}))
-        review_target=run/'reviews'/target.name
-        review_job=uid+':source_review'
-        queue.register(review_job,'selected_source_verification',uid,[target,review_archive,*review_evidence],[jid],
-                       {'review_status':'replayed_model_check_not_human_approval'})
-        if queue.committed_json(review_job,review_target) is None:
-            def save_review(spec):
-                dump(review_target,review)
-                return {'outputs':[review_target,review_archive,*review_evidence],'new_api_cost_usd':0,
-                        'method':'replay_snapshot_review'}
-            queue.run(review_job,save_review)
+        for directory,stage,model,job_stage in (('reviews','source_review',VisualReview,'selected_source_verification'),
+                                                ('verifications','relation_check',RelationCheck,'relationship_verification')):
+            review_source=folder/directory/target.name
+            if not review_source.is_file():
+                continue
+            review=read(review_source)
+            fields={key:review[key] for key in model.model_fields}
+            if model.model_validate(fields).unit_id!=uid:
+                raise ValueError(f'Replay review belongs to another region: {uid}')
+            review_archive=copy_evidence(review_source,run/'imported_originals'/directory/target.name)
+            review_evidence=copy_receipt(folder,run,review.get('tool_receipt',{}))
+            review_target=run/directory/target.name
+            review_job=uid+':'+stage
+            queue.register(review_job,job_stage,uid,[target,review_archive,*review_evidence],[jid],
+                           {'review_status':'replayed_model_check_not_human_approval'})
+            if queue.committed_json(review_job,review_target) is None:
+                def save_review(spec,review=review,review_target=review_target,review_archive=review_archive,
+                                review_evidence=review_evidence,stage=stage):
+                    dump(review_target,review)
+                    return {'outputs':[review_target,review_archive,*review_evidence],'new_api_cost_usd':0,
+                            'method':'replay_snapshot_'+('review' if stage=='source_review' else stage)}
+                queue.run(review_job,save_review)
 
 
-def import_pages(run,bundle,source,identity,queue,units,profile):
+def import_pages(run,bundle,source,identity,queue,units,profile=None):
     from .program import result_path
     folder,doc,pages,metadata=bundle;imported=set()
     for unit in units:
@@ -107,7 +111,7 @@ def import_pages(run,bundle,source,identity,queue,units,profile):
             original=pages[n];value=read(original)
             if value.get('_metadata',{}).get('source_document_id') not in [None,doc.get('document_id',doc.get('source_document_id'))]:
                 raise ValueError('Imported page provenance differs from its PDF manifest')
-            value=validate({k:v for k,v in value.items() if k!='_metadata'},n,profile['drawing_reference_patterns'])
+            value=validate({k:v for k,v in value.items() if k!='_metadata'},n)
             archived=copy_evidence(original,run/'imported_originals'/f'p{n:04}.json')
             record=dict(unit=unit,extraction=value,source_text=[],metadata=dict(source_sha256=source['source_sha256'],
                 identity=identity,review_status='reused_proposal_not_newly_verified',original_proposal='imported_originals/'+archived.name,
