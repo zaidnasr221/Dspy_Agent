@@ -10,7 +10,7 @@ import time
 from jsonschema import Draft202012Validator,ValidationError
 from .model import DEFAULT_MODELS,resolve_model
 from .storage import dump,read,filehash,objecthash,safe_path
-from .tool_protocol import AuthenticationFailure,IncompleteRead,InsufficientCredits,RateLimitFailure,ToolFailure,redact
+from .tool_protocol import AuthenticationFailure,IncompleteRead,InsufficientCredits,RateLimitFailure,ToolFailure,redact,required_read_files
 from .openai_retry_guard import BILLING,RATE_LIMIT,openai_retry_guard
 
 
@@ -142,11 +142,13 @@ class OpenCode:
         folder=Path(folder).resolve();files=sorted(p for p in folder.iterdir() if p.is_file())
         if any(p.resolve().parent!=folder for p in files):raise ToolFailure('Tool input links must not escape the registered folder')
         inputs={p.name:filehash(p) for p in files};images={p.name for p in files if p.suffix=='.png'}
-        required=images if task=='identity' else {'source.png','focus.png'}
-        if not images or required-images:raise ToolFailure('Required images missing; no model process started')
+        required=required_read_files(task,images)
+        if not images or required-inputs.keys():
+            raise ToolFailure('Required tool input files missing; no model process started: '+(', '.join(sorted(required-inputs.keys())) or 'no PNG images supplied'))
         manifest=dict(working_directory=str(folder),available_files=[dict(file_path=str(p)) for p in files],
-                      required_image_reads=[dict(file_path=str(folder/n)) for n in sorted(required)])
-        prompt+='\nUse the OpenCode read tool (equivalent to Read) with filePath set to each exact file_path below. Read ALL required images. Return only one JSON object matching FINAL_JSON_SCHEMA, without markdown.\nTOOL_INPUT_MANIFEST: '+json.dumps(manifest)+'\nFINAL_JSON_SCHEMA: '+json.dumps(schema)
+                      required_image_reads=[dict(file_path=str(folder/n)) for n in sorted(required&images)],
+                      required_reads=[dict(file_path=str(folder/n)) for n in sorted(required)])
+        prompt+='\nUse the OpenCode read tool (equivalent to Read) with filePath set to each exact file_path below. Read ALL required files. Return only one JSON object matching FINAL_JSON_SCHEMA, without markdown.\nTOOL_INPUT_MANIFEST: '+json.dumps(manifest)+'\nFINAL_JSON_SCHEMA: '+json.dumps(schema)
         payload=dict(backend='opencode',provider='openai',task=task,prompt=prompt,schema=schema,inputs=inputs,
                      model=self.model,version=self.version,tool_policy='exact read allowlist; pure; isolated state; max 6 steps')
         key=objecthash(payload);cache=self.run/'tool_cache'/f'{key}.json'
@@ -217,8 +219,10 @@ class OpenCode:
                 status = 'rejected_unread_source'
             else:
                 status = 'image_read_receipts_present_not_engineering_approval'
-            dump(validation,dict(required_image_files=sorted(required),successful_image_files=sorted(result['reads']),
-                missing_image_files=missing,tool_errors=json.loads(redact(json.dumps(result['errors']))),
+            dump(validation,dict(required_files=sorted(required),successful_files=sorted(result['reads']),
+                missing_files=missing,required_image_files=sorted(required&images),
+                successful_image_files=sorted(result['reads']&images),missing_image_files=sorted(set(missing)&images),
+                tool_errors=json.loads(redact(json.dumps(result['errors']))),
                 raw_response=raw.name,status=status,
                 complete_terminal_step=bool(result['terminal']),reported_cost_usd=result['total_cost_usd']))
         if billing_failed:
@@ -238,7 +242,7 @@ class OpenCode:
         if result['errors']:raise ToolFailure('OpenCode error: '+redact(json.dumps(result['errors']))[:700]+'; inspect '+str(raw))
         if proc.returncode or not result['terminal'] or result['terminal'].get('reason') not in ('stop','end_turn'):
             raise IncompleteRead('Incomplete OpenCode terminal response retained: '+str(raw))
-        if missing:raise ToolFailure('Source image Read receipts missing: '+', '.join(missing)+'; inspect '+str(validation))
+        if missing:raise ToolFailure('Source file Read receipts missing: '+', '.join(missing)+'; inspect '+str(validation))
         try:
             text=result['text']
             if text.startswith('```json') and text.endswith('```'):text=text[7:-3].strip()
@@ -249,7 +253,7 @@ class OpenCode:
             raise IncompleteRead('OpenCode returned invalid structured output; raw response retained: '+str(raw)) from exc
         reply=dict(output=output,raw_response='raw_responses/'+raw.name,request_hash=key,usage=result['usage'],
             model_usage={self.model:dict(costUSD=result['total_cost_usd'],usage=result['usage'])},
-            reported_cost_usd=result['total_cost_usd'],successful_image_reads=sorted(result['reads']),
+            reported_cost_usd=result['total_cost_usd'],successful_image_reads=sorted(result['reads']&images),
             model=self.model,backend='opencode',cache_hit=False,read_validation='raw_responses/'+validation.name)
         reply.update(raw_sha256=filehash(raw),output_sha256=objecthash(output));dump(cache,reply)
         return reply

@@ -7,7 +7,7 @@ embedded text, so the strings below are what a visual reader returns. Offline on
 from pathlib import Path
 import pytest
 
-from facade_dspy import manufacturers
+from facade_dspy import rules
 from facade_dspy.exports import relationship_status
 from facade_dspy.program import FacadeExtractionAgent
 from facade_dspy.storage import read
@@ -20,7 +20,7 @@ ALUPCO = dict(manufacturer_brand='ALUPCO', legal_manufacturer=None, system_id='5
 
 @pytest.fixture
 def alupco():
-    return manufacturers.resolve(ALUPCO)['profile']
+    return None  # one generic rule set; kept as a fixture so test signatures stay readable
 
 
 # --- 1. Table article ID tokenization -------------------------------------------------
@@ -42,36 +42,35 @@ def alupco():
     ('235917', ['235917']),
 ])
 def test_page15_article_cells_keep_complete_ids(cell, expected, alupco):
-    found, drawings, leftover = manufacturers.table_articles(cell, alupco)
+    found, drawings, leftover = rules.table_articles(cell)
     assert (found, drawings, leftover) == (expected, [], '')
 
 
 @pytest.mark.parametrize('cell', ['11.4', '14.5', '18.5', '20.5', '(Isolator 11.4mm)', '5 - 7 mm', '9 - 11 mm',
                                   '11 - 13 mm', 'Inner glazing gasket 7 - 9 mm', 'Isolator 20.5mm'])
 def test_page15_dimensions_never_become_components_or_questions(cell, alupco):
-    assert manufacturers.table_articles(cell, alupco) == ([], [], '')
-    assert not manufacturers.literal_article(cell.strip('()'), 'isolator', alupco)
+    assert rules.table_articles(cell) == ([], [], '')
+    assert not rules.literal_article(cell.strip('()'), 'isolator')
 
 
 @pytest.mark.parametrize('cell', ['34', '22', '6'])
 def test_short_numbers_in_article_column_are_questions_not_components(cell, alupco):
     # Dimension-chain values (page 15: 34, 22, 6) are not IDs, but nothing in an article column is dropped silently.
-    assert manufacturers.table_articles(cell, alupco) == ([], [], cell)
+    assert rules.table_articles(cell) == ([], [], cell)
 
 
 def test_variant_suffix_is_never_split_into_a_second_component(alupco):
-    found, _, _ = manufacturers.table_articles('235 918-11.5 / 235 918-20.5', alupco)
+    found, _, _ = rules.table_articles('235 918-11.5 / 235 918-20.5')
     assert found == ['235 918-11.5', '235 918-20.5']
     assert '11.5' not in found and '20.5' not in found
 
 
 def test_alupco_spellings_share_a_key_but_variants_stay_distinct(alupco):
-    key = lambda v: manufacturers.article_key(v, alupco)
+    key = rules.article_key
     assert key('235 918') == key('235918') == key('235 918') == '235918'
     assert len({key('235918'), key('235 918-11.5'), key('235 918-20.5')}) == 3
-    # Other manufacturers keep spaced IDs literal unless their profile opts in.
-    default = manufacturers.resolve({})['profile']
-    assert manufacturers.article_key('235 918', default) == '235 918'
+    # One generic rule: spacing between digit groups never splits a component.
+    assert rules.article_key('123 456') == rules.article_key('123456')
 
 
 # --- 2. Strict relationship eligibility -----------------------------------------------
@@ -83,8 +82,10 @@ def n(kind, box=(.3, .2, .4, .3), detail='transom'):
     return dict(kind=kind, bbox=list(box), detail_id=detail)
 
 
-def r(predicate='inserted_into', basis='drawing_reading', box=(.3, .2, .45, .3), source='iso', target='tr'):
-    return dict(source=source, target=target, predicate=predicate, basis=basis, condition=None, bbox=list(box))
+def r(predicate='inserted_into', basis='drawing_reading', box=(.3, .2, .45, .3), source='iso', target='tr',
+      evidence='leader from isolator 235918 into transom chamber'):
+    return dict(source=source, target=target, predicate=predicate, basis=basis, condition=None, bbox=list(box),
+                evidence=evidence)
 
 
 @pytest.mark.parametrize('rel,source,target,status,reason', [
@@ -101,15 +102,25 @@ def r(predicate='inserted_into', basis='drawing_reading', box=(.3, .2, .45, .3),
     (r(), n('isolator'), n('transom', box=(.3, .7, .4, .8)), 'unresolved', 'target_outside_region'),
     (r(), n('isolator', detail='mullion'), n('transom'), 'unresolved', 'endpoints_in_different_details'),
     (r(), n('unresolved_reference'), n('transom'), 'unresolved', 'source_unresolved_reference'),
+    (r(evidence=None), n('isolator'), n('transom'), 'unresolved', 'no_relationship_evidence'),
+    (r(evidence='  '), n('isolator'), n('transom'), 'unresolved', 'no_relationship_evidence'),
 ])
 def test_relationship_eligibility(rel, source, target, status, reason, alupco):
-    actual, reasons = relationship_status(rel, source, target, False, alupco, TOP)
+    actual, reasons = relationship_status(rel, source, target, False, scope=TOP)
     assert actual == status
     assert (reason in reasons) if reason else reasons == []
 
 
 def test_model_error_disputes_an_otherwise_valid_relation(alupco):
-    assert relationship_status(r(), n('isolator'), n('transom'), True, alupco, TOP)[0] == 'disputed'
+    assert relationship_status(r(), n('isolator'), n('transom'), True, scope=TOP)[0] == 'disputed'
+
+
+@pytest.mark.parametrize('verdict,status,reason', [
+    ('supported', 'proposed', None), ('unsupported', 'invalid', 'rejected_by_relationship_verification'),
+    ('uncertain', 'unresolved', 'relationship_verification_uncertain'), ('missing', 'unresolved', 'relationship_not_verified')])
+def test_relationship_verification_gates_eligibility(verdict, status, reason):
+    actual, reasons = relationship_status(r(), n('isolator'), n('transom'), False, scope=TOP, verification=verdict)
+    assert actual == status and ((reason in reasons) if reason else reasons == [])
 
 
 # --- End to end through the real export -----------------------------------------------
@@ -123,13 +134,17 @@ class Page15(FakeBackend):
             unit = read(folder / 'scope.json')
             y0, y1 = unit['bbox'][1], unit['bbox'][3]
             box = lambda a, b: [.2, y0 + (y1 - y0) * a, .8, y0 + (y1 - y0) * b]
-            far = [.2, .85, .8, .9] if y0 < .5 else [.2, .1, .8, .15]
             node = lambda i, kind, article, label, d='transom': dict(id=i, detail_id=d, article_id=article, kind=kind,
                 label=label, material=None, quantity=None, callout=None, bbox=box(.3, .5))
-            rel = lambda s, p, t, basis='drawing_reading', b=None: dict(source=s, predicate=p, target=t, basis=basis,
-                condition=None, bbox=b or box(.3, .5))
+            rel = lambda s, p, t, basis='drawing_reading', evidence='leader line in section', d=None: dict(
+                source=s, predicate=p, target=t, basis=basis, condition=None, bbox=box(.3, .5), evidence=evidence)
             rows = [['Art.-Nr. 235 918-11.5 (Isolator 11.4mm)', '11.4'], ['Art.-Nr. 235 918-20.5 (Isolator 20.5mm)', '20.5'],
                     ['Art.-Nr. 235 545', '5 - 7 mm'], ['Art.-Nr. 237 351', '11 - 13 mm']]
+            # What a reader transcribes from page 15 (callouts and table cells). 32477 is printed but
+            # never claimed as a node; 99999 is claimed below but is NOT printed (a hallucination).
+            reply['output']['source_text'] = [dict(text=s, bbox=box(.1, .2)) for s in (
+                'Isolator 235918 (20.5mm)', 'Glazing gasket 235456', 'Glazing spacer 32476', 'Spandrel frame 32477',
+                'Art.-Nr. 235 918-11.5', 'Art.-Nr. 235 545', 'Art.-Nr. 237 351')]
             reply['output']['extraction'] = dict(
                 pdf_page=unit['pdf_page'], page_kind='detail',
                 details=[dict(id='transom', title='Transom section', drawing_refs=[], bbox=box(.1, .9)),
@@ -139,13 +154,14 @@ class Page15(FakeBackend):
                        node('gk', 'gasket', '235456', 'Glazing gasket'),
                        node('sp', 'glazing_spacer', '32476', 'Glazing spacer'),
                        node('tr', 'transom', None, 'Transom'),
+                       node('ghost', 'bracket', '99999', 'Bracket'),
                        node('dim', 'dimension', '20.5', 'Isolator size'),
                        node('p1', 'position', None, 'Position 1', 'steps'),
                        node('p2', 'position', None, 'Position 2', 'steps')],
                 relations=[rel('iso', 'inserted_into', 'tr'), rel('sp', 'fits_into', 'tr'),
                            rel('gk', 'near', 'tr'), rel('p1', 'followed_by', 'p2'),
-                           rel('gk', 'seals_against', 'tr', b=far), rel('iso', 'fixed_to', 'gk', basis='inference'),
-                           rel('sp', 'supports', 'p1')],
+                           rel('gk', 'seals_against', 'tr', evidence=None), rel('iso', 'fixed_to', 'gk', basis='inference'),
+                           rel('sp', 'supports', 'p1'), rel('ghost', 'fixed_to', 'tr')],
                 measurements=[], instructions=[], unresolved=[],
                 tables=[dict(id='t', title='Rubber gaskets & isolators', columns=['Art.-Nr.', 'Size'], units=[None, None],
                              rows=[dict(cells=c, bbox=box(.6, .7)) for c in rows], footnotes=[], bbox=box(.55, .8))])
@@ -161,12 +177,15 @@ def test_page15_export(tmp_path):
     assert set(components) == {'235918', '235456', '32476', '235918-11.5', '235918-20.5', '235545', '237351'}
     literals = {o['literal_article_id'] for o in components['235918']['observations']}
     assert literals == {'235918', '235 918'}  # both printed spellings retained, one component
-    assert read(run / 'document.json')['manufacturer_profile'] == 'alupco'
+    entities = {e['id']: e for e in read(data / 'entities.json')}
+    assert entities['ghost']['article_status'] == 'ungrounded_article' and entities['ghost']['component_id'] is None
+    assert entities['gk']['article_grounded'] is True
+    assert any(q['category'] == 'ungrounded_article' and q['message'] == '99999' for q in read(data / 'questions.json'))
     status = {(x['source'], x['predicate'], x['target']): x for x in read(data / 'relationships.json')}
     expected = {('iso', 'inserted_into', 'tr'): 'proposed', ('sp', 'fits_into', 'tr'): 'proposed',
                 ('gk', 'near', 'tr'): 'unresolved', ('p1', 'followed_by', 'p2'): 'invalid',
                 ('gk', 'seals_against', 'tr'): 'unresolved', ('iso', 'fixed_to', 'gk'): 'unresolved',
-                ('sp', 'supports', 'p1'): 'invalid'}
+                ('sp', 'supports', 'p1'): 'invalid', ('ghost', 'fixed_to', 'tr'): 'unresolved'}
     assert {k: v['relationship_status'] for k, v in status.items()} == expected
     assert status[('sp', 'fits_into', 'tr')]['canonical_predicate'] == 'inserted_into'
     for row in status.values():
@@ -175,3 +194,4 @@ def test_page15_export(tmp_path):
     questions = read(data / 'questions.json')
     assert not [q for q in questions if q['category'] == 'unparsed_table_article_cell']
     assert any(q['category'] == 'unresolved_article_label' and q['message'] == '20.5' for q in questions)
+    assert 'source_article_ungrounded' in status[('ghost', 'fixed_to', 'tr')]['status_reasons']

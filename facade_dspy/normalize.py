@@ -11,7 +11,7 @@ def normalize(parsed):
       'detail':{'id':None,'title':'Unclassified detail','drawing_refs':[],'bbox':[0,0,1,1]},
       'node':{'id':None,'detail_id':None,'article_id':None,'kind':'unclassified','label':'Unlabelled item',
               'material':None,'quantity':None,'callout':None,'bbox':[0,0,1,1]},
-      'relation':{'source':None,'predicate':'unresolved_relation','target':None,'basis':'inference','condition':None,'bbox':[0,0,1,1]},
+      'relation':{'source':None,'predicate':'unresolved_relation','target':None,'basis':'inference','condition':None,'bbox':[0,0,1,1],'evidence':None},
       'measurement':{'subject':None,'property':'unclassified','value':None,'unit':None,'datum':None,'condition':None,'bbox':[0,0,1,1]},
       'table':{'id':None,'title':'Unclassified table','columns':[],'units':[],'rows':[],'footnotes':[],'bbox':[0,0,1,1]},
       'instruction':{'detail_id':None,'sequence':None,'text':'Unclassified instruction','condition':None,'article_refs':[],'bbox':[0,0,1,1]},

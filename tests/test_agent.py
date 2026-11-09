@@ -48,7 +48,7 @@ def page_result(number,unit=None):
     return dict(pdf_page=number,page_kind='detail',details=[dict(id='d',title='Synthetic fixture detail',drawing_refs=[],bbox=box)],
         nodes=[dict(id='a',detail_id='d',article_id='A100',kind='component_instance',label='Fixture connector',material=None,quantity=None,callout=None,bbox=box),
                dict(id='s',detail_id='d',article_id='V100',kind='fastener',label='Fixture screw',material=None,quantity=1,callout='2',bbox=box)],
-        relations=[dict(source='a',predicate='fastened_by',target='s',basis='drawing_reading',condition='Fixture only',bbox=box)],
+        relations=[dict(source='a',predicate='fastened_by',target='s',basis='drawing_reading',condition='Fixture only',bbox=box,evidence='Leader from screw callout 2 to connector A100')],
         measurements=[dict(subject='a',property='width',value=52,unit=None,datum=None,condition=None,bbox=box)],
         tables=[dict(id='t',title='Synthetic table',columns=['Article','Value'],units=[None,None],rows=[dict(cells=['A100','52'],bbox=box)],footnotes=['Unit is unknown in this fixture'],bbox=box)],
         instructions=[],unresolved=['Material and engineering applicability remain unknown'])
@@ -63,6 +63,11 @@ class FakeBackend:
             unit=read(folder/'scope.json')
             if self.mode=='truncate_once' and self.calls.count('extraction')==1:raise IncompleteRead('Synthetic truncation')
             output=dict(unit_id=unit['unit_id'],source_text=[],extraction=page_result(unit['pdf_page'],unit))
+        elif task=='relation_check':
+            unit=read(folder/'scope.json')
+            verdict='unsupported' if self.mode=='relation_unsupported' else 'supported'
+            output=dict(unit_id=unit['unit_id'],verdicts=[dict(claim_id=c['claim_id'],source=c['source'],predicate=c['predicate'],target=c['target'],
+                verdict=verdict,reason='Test simulation',bbox=c['bbox']) for c in read(folder/'relations.json')])
         else:
             unit=read(folder/'scope.json')
             output=dict(unit_id=unit['unit_id'],findings=[dict(severity='error',message='Synthetic unsupported unit',bbox=unit['bbox'])] if self.mode=='review_error' else [],scope='Test simulation, not a real model review')
@@ -89,7 +94,8 @@ def test_url_to_dspy_tool_checks_and_formats(tmp_path):
         result=agent(pdf_url=url);run=Path(result.output_directory)
         assert result.coverage['complete_proposal_pages']==[1,2]
         assert result.coverage['human_engineering_approved_records']==0
-        assert calls.count('extraction')==4 and calls.count('review')==2
+        # Drawing pages are read whole: one region per page, each with a relationship check.
+        assert calls.count('extraction')==2 and calls.count('review')==2 and calls.count('relation_check')==2
         assert '?' not in read(run/'source.json')['source_url']
         for ext in ['json','parquet','csv']:assert (run/'data'/f'components.{ext}').exists()
         assert pl.read_parquet(run/'data/components.parquet').height==2
@@ -180,7 +186,8 @@ def test_pilot_error_blocks_scaling(tmp_path):
     result=agent(pdf_url=pdf.as_uri())
     assert result.coverage['status']=='pilot_source_check_found_errors'
     assert calls.count('extraction')==1
-    assert result.coverage['remaining_pages']==[1,2]
+    # The pilot page was read whole, so its proposal exists; the review error stops all further pages.
+    assert result.coverage['remaining_pages']==[2]
 
 
 def test_truncated_region_is_split_never_promoted_to_page(tmp_path):
@@ -188,7 +195,7 @@ def test_truncated_region_is_split_never_promoted_to_page(tmp_path):
     agent=FacadeExtractionAgent(out=tmp_path/'runs',budget_usd=10,backend_factory=lambda r,b:FakeBackend(calls,'truncate_once'))
     result=agent(pdf_url=pdf.as_uri());run=Path(result.output_directory)
     assert result.coverage['complete_proposal_pages']==[]
-    assert len(read(run/'units.json'))==6
+    assert len(read(run/'units.json'))==4 # two whole pages, one split into two halves
     result=agent(pdf_url=pdf.as_uri())
     assert result.coverage['complete_proposal_pages']==[1,2]
 

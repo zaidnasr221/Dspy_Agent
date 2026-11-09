@@ -314,6 +314,19 @@
           "minItems": 4,
           "title": "Bbox",
           "type": "array"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What on the page shows this relation: quoted text, or the callout/leader/contact seen in the drawing.",
+          "title": "Evidence"
         }
       },
       "required": [

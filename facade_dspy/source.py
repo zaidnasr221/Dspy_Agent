@@ -117,6 +117,34 @@ def band_split(tables,low=.3,high=.7):
     return edges[0] if edges else .5
 
 
+BAND_MIN_NATIVE_CHARS=1500
+FOCUS_PIXELS=3200
+
+
+def band_page(page):
+    """Split only pages with detected tables and a dense native text layer (long tables, price lists)."""
+    tables=[t for t in page.get('table_candidates') or [] if isinstance(t,dict) and 'bbox' in t]
+    return bool(tables) and len(page.get('native_text') or '')>=BAND_MIN_NATIVE_CHARS
+
+
+def content_box(page):
+    """Normalised bounds of drawn/printed content, ignoring page-sized backgrounds; whole page if unknown."""
+    w,h=page.rect.width,page.rect.height;box=None
+    try:
+        for kind,rect in page.get_bboxlog():
+            r=(pymupdf.Rect(rect)*page.rotation_matrix)&page.rect
+            if r.is_empty:continue
+            if r.width*r.height>.9*w*h:
+                if kind=='fill-image':return [0,0,1,1]
+                continue
+            box=r if box is None else box|r
+    except Exception:
+        return [0,0,1,1]
+    if box is None:return [0,0,1,1]
+    pad=.01
+    return [max(0,box.x0/w-pad),max(0,box.y0/h-pad),min(1,box.x1/w+pad),min(1,box.y1/h+pad)]
+
+
 def make_units(run,pages,imported_pages=()):
     path=run/'units.json'
     if path.exists():
@@ -129,8 +157,10 @@ def make_units(run,pages,imported_pages=()):
         n=p['pdf_page']
         if n in imported_pages:
             units.append(dict(unit_id=f'p{n:04}:page',pdf_page=n,bbox=[0,0,1,1],depth=0,parent=None,imported=True));continue
-        # ponytail: two non-overlapping bands, with full-page/header context supplied to the reader.
-        # More precise regions can replace this planner without changing the queue/data contracts.
+        # Drawing pages are read whole, so callouts, leaders and the parts they point at stay in one scope.
+        # Only text-dense table pages are split into two bands (never through a detected table).
+        if not band_page(p):
+            units.append(dict(unit_id=f'p{n:04}:full',pdf_page=n,bbox=[0,0,1,1],depth=0,parent=None,imported=False));continue
         cut=band_split(p.get('table_candidates') or [])
         for label,bbox in [('top',[0,0,1,cut]),('bottom',[0,cut,1,1])]:
             units.append(dict(unit_id=f'p{n:04}:{label}',pdf_page=n,bbox=bbox,depth=0,parent=None,imported=False))
@@ -149,10 +179,13 @@ def prepare_images(run,unit,folder):
     n=unit['pdf_page'];shutil.copy2(run/'images'/f'p{n:04}.png',folder/'source.png')
     with pymupdf.open(run/'source.pdf') as pdf:
         page=pdf[n-1];w,h=page.rect.width,page.rect.height;b=unit['bbox']
+        if b==[0,0,1,1]:b=content_box(page) # whole-page unit: zoom into the drawn area, margins dropped
         clip=pymupdf.Rect(b[0]*w,b[1]*h,b[2]*w,b[3]*h)
-        # Zoom the crop itself (longest side ~2200 px) so small callouts gain resolution; never below full-page scale.
-        scale=max(2200/max(w,h),min(2200/max(clip.width,clip.height,1e-6),4*2200/max(w,h)))
+        # source.png (~2000 px) gives page context; focus.png is the high-resolution reading image
+        # (longest side ~3200 px) so small callouts and article numbers are legible. Max 4x page scale.
+        scale=max(FOCUS_PIXELS/max(w,h),min(FOCUS_PIXELS/max(clip.width,clip.height,1e-6),4*FOCUS_PIXELS/max(w,h)))
         page.get_pixmap(matrix=pymupdf.Matrix(scale,scale),clip=clip,alpha=False).save(folder/'focus.png')
     record=read(run/'index'/f'p{n:04}.json')
     (folder/'native.txt').write_text(record['native_text'],encoding='utf-8')
     dump(folder/'scope.json',unit)
+    return b
