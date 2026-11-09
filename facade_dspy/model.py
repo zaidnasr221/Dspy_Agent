@@ -3,8 +3,8 @@ from dataclasses import asdict,dataclass
 import os
 import re
 
-DEFAULT_BACKEND='claude-code'
-DEFAULT_MODELS={'claude-code':'claude-sonnet-5-5','opencode':'openai/gpt-5.4-mini'}
+DEFAULT_BACKEND='opencode'
+DEFAULT_MODELS={'claude-code':'claude-sonnet-5-5','opencode':'openai/gpt-6.1-sol'}
 API_KEY_ENV={'claude-code':'ANTHROPIC_API_KEY','opencode':'OPENAI_API_KEY'}
 
 

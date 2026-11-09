@@ -19,5 +19,8 @@ facade-extract = "facade_dspy.cli:main"
 [tool.setuptools.packages.find]
 include = ["facade_dspy*"]
 
+[tool.setuptools.package-data]
+facade_dspy = ["manufacturers/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -5,7 +5,8 @@ import shutil
 import tempfile
 import uuid
 
-from .storage import dump, objecthash, read, safe_path
+from .storage import dump, filehash, objecthash, read, safe_path
+from .manufacturers import PROFILE_FILE
 
 
 def published_directory(run):
@@ -88,10 +89,16 @@ def publish(run, queue, units, identity, status, costs, compare):
                 if receipt.get(field):
                     raw = safe_path(run, receipt[field])
                     copy_file(raw, snapshot / raw.relative_to(run))
-    for name in ('model_selection.json', 'cost_ledger.json', 'units.json', 'pilot_validation.json'):
+    for name in ('model_selection.json', 'cost_ledger.json', 'units.json', 'pilot_validation.json', PROFILE_FILE):
         if (run / name).is_file():
             copy_file(run / name, snapshot / name)
     coverage = export(snapshot, units, identity, status, costs, compare)
+    files = [snapshot / name for name in ('document.json', 'units.json', PROFILE_FILE)
+             if (snapshot / name).is_file()]
+    for directory in ('proposals', 'reviews', 'imported_originals', 'raw_responses'):
+        files.extend(p for p in (snapshot / directory).rglob('*') if p.is_file())
+    dump(snapshot / 'replay_manifest.json', dict(version=1,
+        files={p.relative_to(snapshot).as_posix(): filehash(p) for p in sorted(files)}))
     dump(run / 'publication.json', {'version': 1, 'snapshot': snapshot.relative_to(run).as_posix()})
     try:
         mirror_legacy_paths(snapshot, run, previous)

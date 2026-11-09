@@ -1,0 +1,118 @@
+{
+  "id": "default",
+  "version": 1,
+  "description": "Rules applied to every document. Manufacturer profiles override individual keys.",
+  "brand_aliases": [],
+  "system_aliases": {},
+  "drawing_reference_patterns": [
+    "K\\d{7}",
+    "geff[fpc]?\\d*"
+  ],
+  "article_patterns": [
+    "[A-Za-z][A-Za-z0-9_.-]{2,24}",
+    "\\d{1,3}[A-Za-z]{1,4}\\d{1,6}",
+    "[A-Za-z][A-Za-z0-9_.-]*(?:[ \\u00a0][A-Za-z0-9_.-]+){1,3}",
+    "\\d{3}[ \\u00a0]?\\d{3}(?:-\\d+(?:\\.\\d+)?)?",
+    "\\d{5,10}(?:-\\d+(?:\\.\\d+)?)?",
+    "\\d{2,}(?:[.\\-/]\\d+){1,4}(?:[.\\-][A-Za-z0-9-]+)?"
+  ],
+  "article_requires_digit_when_spaced": true,
+  "tool_article_patterns": [
+    "\\d{4}"
+  ],
+  "tool_kind_keywords": [
+    "tool",
+    "jig"
+  ],
+  "article_column_patterns": [
+    "Art\\.?[- ]?(?:Nr|No)",
+    "article",
+    "reference",
+    "part\\s*(?:no|number)",
+    "item\\s*(?:no|code)",
+    "code"
+  ],
+  "article_column_exclude_patterns": [
+    "drawing"
+  ],
+  "table_article_token_patterns": [
+    "\\d{3}[ \\u00a0]?\\d{3}-\\d+(?:\\.\\d+)?",
+    "\\d{5,10}-\\d+(?:\\.\\d+)?",
+    "\\d{3,}[.\\-/]\\d{3,}(?:[.\\-/][0-9A-Za-z-]+)*",
+    "\\d{1,3}[A-Za-z]{1,4}\\d{1,6}",
+    "[A-Z]{1,4}\\d{3,8}",
+    "\\d{3}[ \\u00a0]?\\d{3}",
+    "\\d{5,10}"
+  ],
+  "measurement_patterns": [
+    "\\d+(?:[.,]\\d+)?\\s*[-–]\\s*\\d+(?:[.,]\\d+)?\\s*(?:mm|cm|m)",
+    "\\d+(?:[.,]\\d+)?\\s*(?:mm|cm|m|kg|°|deg)",
+    "\\d{1,3}[.,]\\d{1,2}"
+  ],
+  "article_key_ignore_digit_group_spaces": false,
+  "relationship_predicates": {
+    "fastened_by": [
+      "fixed_with",
+      "screwed_with",
+      "secured_by",
+      "fastened_with"
+    ],
+    "fixed_to": [
+      "attached_to",
+      "mounted_on",
+      "mounted_to",
+      "screwed_to",
+      "secured_to"
+    ],
+    "inserted_into": [
+      "fits_into",
+      "installed_in",
+      "inserted_in",
+      "slides_into",
+      "located_in"
+    ],
+    "clipped_into": [
+      "clipped_to",
+      "snapped_into",
+      "clips_into"
+    ],
+    "seals_against": [
+      "sealed_against"
+    ],
+    "supports": [
+      "carries",
+      "bears"
+    ],
+    "supported_by": [
+      "rests_on",
+      "sits_on",
+      "carried_by"
+    ],
+    "bonded_to": [
+      "glued_to",
+      "structurally_bonded_to"
+    ],
+    "isolates": [
+      "thermally_separates",
+      "separates"
+    ],
+    "spaces": [
+      "spacer_for"
+    ],
+    "alternative_to": [
+      "alternative_of",
+      "replaces_as_alternative"
+    ]
+  },
+  "relationship_endpoint_exclude_kinds": [
+    "drawing_reference",
+    "unresolved_reference",
+    "dimension",
+    "measurement",
+    "annotation",
+    "label",
+    "position",
+    "step"
+  ],
+  "relationship_scope_tolerance": 0.02
+}

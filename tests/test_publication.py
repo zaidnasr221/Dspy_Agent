@@ -66,6 +66,23 @@ def test_publication_excludes_uncommitted_proposals(tmp_path):
         assert not any(name.startswith('proposals/') for name in archive.namelist())
 
 
+def test_live_publication_ignores_identity_without_a_commit(tmp_path):
+    pdf = pdf_file(tmp_path / 'fixture.pdf')
+    out = tmp_path / 'runs'
+    indexed = FacadeExtractionAgent(out=out, index_only=True)(pdf_url=pdf.as_uri())
+    run = Path(indexed.output_directory)
+    identity = run / 'identity.json'
+    dump(identity, dict(read(identity), manufacturer_brand='Uncommitted brand'))
+    calls = []
+    agent = FacadeExtractionAgent(out=out, budget_usd=10,
+                                  backend_factory=lambda run, budget: FakeBackend(calls))
+    result = agent(pdf_url=pdf.as_uri())
+    assert calls.count('identity') == 1
+    assert read(Path(result.snapshot_directory) / 'document.json')['manufacturer_brand'] == 'Demo'
+    assert read(Path(indexed.snapshot_directory) / 'document.json')['manufacturer_brand'] is None
+    assert read(run / 'work' / 'progress.json')['by_stage']['document_identity'] == {'completed': 1}
+
+
 def test_failed_export_preserves_last_snapshot(tmp_path, monkeypatch):
     from facade_dspy import exports
     pdf = pdf_file(tmp_path / 'fixture.pdf', pages=1)

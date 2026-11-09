@@ -54,6 +54,20 @@ def test_benchmark_reports_missing_regions_and_rejects_ambiguous_predictions():
         evaluate(truth, [prediction, prediction])
 
 
+def test_benchmark_distinguishes_matching_articles_in_different_details():
+    from facade_dspy.benchmark import evaluate
+    truth, prediction = inputs()
+    expected = truth['cases'][0]['expected']
+    for value in (expected, prediction['extraction']):
+        value['details'].append(dict(value['details'][0], id='alternate', title='Alternate detail'))
+        value['nodes'].append(dict(value['nodes'][0], id='alternate-connector', detail_id='alternate'))
+    prediction['extraction']['relations'][0]['source'] = 'alternate-connector'
+
+    metrics = evaluate(truth, [prediction])['metrics']
+    assert metrics['article_ids']['f1'] == 1
+    assert metrics['relationships']['false_positive'] == metrics['relationships']['false_negative'] == 1
+
+
 def test_benchmark_cli_reads_saved_json_without_extraction(tmp_path):
     truth, prediction = inputs()
     labels = tmp_path / 'truth.json'

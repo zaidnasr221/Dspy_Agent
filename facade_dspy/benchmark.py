@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from .publication import published_directory
+from .manufacturers import read_pin
 from .schema import validate
 from .storage import read
 
@@ -43,7 +44,7 @@ def observations(result):
         article = node['article_id']
         if article:
             add('article_ids', article)
-            nodes[node['id']] = ['article', article, node['callout']]
+            nodes[node['id']] = ['article', article, node['callout'], details[node['detail_id']]]
         else:
             nodes[node['id']] = ['unlabelled_article', node['kind'], node['label'],
                                  node['callout'], details[node['detail_id']]]
@@ -77,7 +78,7 @@ def scores(tp, fp, fn):
     }
 
 
-def evaluate(ground_truth, proposals):
+def evaluate(ground_truth, proposals, *, profiles_by_source=None):
     if ground_truth.get('version') != 1 or not ground_truth.get('cases'):
         raise ValueError('Expected a version 1 ground-truth manifest with labeled cases')
     predictions = {}
@@ -105,9 +106,11 @@ def evaluate(ground_truth, proposals):
             raise ValueError(f'Duplicate labeled region in {case_id}')
         seen_ids.add(case_id)
         seen_regions.add(key)
-        truth = observations(validate(expected, page))
+        profile=(profiles_by_source or {}).get(key[0],{})
+        patterns=profile.get('drawing_reference_patterns')
+        truth = observations(validate(expected, page, patterns))
         available = key in predictions
-        predicted = observations(validate(predictions[key], page)) if available else {
+        predicted = observations(validate(predictions[key], page, patterns)) if available else {
             metric: Counter() for metric in METRICS
         }
         metrics = {}
@@ -135,14 +138,26 @@ def main():
                         help='Run directory, snapshot, or all_proposals JSON. Repeat for multiple documents.')
     args = parser.parse_args()
     proposals = []
+    profiles={}
     for path in args.predictions:
         if path.is_dir():
             path = published_directory(path) / 'data/all_proposals.json'
+        if path.name=='all_proposals.json' and path.parent.name=='data':
+            snapshot=path.parent.parent
+            document=snapshot/'document.json'
+            if document.is_file():
+                doc=read(document)
+                source_sha=doc.get('source_sha256',doc.get('sha256'))
+                pin=read_pin(snapshot,source_sha)
+                if pin:
+                    profile=pin['scope']['profile']
+                    if profiles.setdefault(source_sha,profile)!=profile:
+                        parser.error('Predictions for one source use conflicting manufacturer profiles')
         records = read(path)
         if not isinstance(records, list):
             parser.error(f'Expected a JSON list of proposal envelopes in {path}')
         proposals.extend(records)
-    print(json.dumps(evaluate(read(args.ground_truth), proposals), indent=2))
+    print(json.dumps(evaluate(read(args.ground_truth), proposals,profiles_by_source=profiles), indent=2))
 
 
 if __name__ == '__main__':
