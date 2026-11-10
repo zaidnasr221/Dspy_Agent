@@ -58,12 +58,15 @@ def relationship_status(relation,source,target,disputed,profile=None,scope=None,
     verification: 'supported' | 'unsupported' | 'uncertain' | 'missing', or 'not_checked' to skip that gate.
     """
     invalid=[];unresolved=[]
+    predicate=rules.canonical_predicate(relation['predicate'])
     if relation['source']==relation['target']:invalid.append('self_reference')
     for side,node in (('source',source),('target',target)):
-        kind=(node.get('kind') or '').casefold()
+        kind=re.sub(r'[\s-]+','_',(node.get('kind') or '').strip().casefold())
         if kind=='unresolved_reference':unresolved.append(side+'_unresolved_reference')
         elif kind in rules.NON_COMPONENT_KINDS:invalid.append(f'{side}_is_{kind}')
-    if rules.canonical_predicate(relation['predicate']) is None:unresolved.append('unrecognized_predicate')
+        if side=='target' and predicate=='fastened_by' and kind in {'glass','gasket','sealant'}:
+            invalid.append('fastened_by_target_is_not_fastener')
+    if predicate is None:unresolved.append('unrecognized_predicate')
     if relation['basis'] not in rules.OBSERVED_BASES:unresolved.append('inferred_not_observed')
     if not (relation.get('evidence') or '').strip():unresolved.append('no_relationship_evidence')
     if scope is not None:
@@ -82,6 +85,59 @@ def relationship_status(relation,source,target,disputed,profile=None,scope=None,
     reasons=invalid+unresolved+(['model_source_check_reported_error'] if disputed else [])
     status='invalid' if invalid else 'unresolved' if unresolved else 'disputed' if disputed else 'proposed'
     return status,reasons
+
+
+def _mentions(text,token):
+    """Whole-token, case-insensitive mention; digit-group spacing is ignored ('235 547' == '235547')."""
+    token=re.sub(r'(?<=\d)[ \u00a0]+(?=\d)','',str(token or '').strip())
+    return len(token)>=3 and re.search(r'(?<![A-Za-z0-9_])(?<![A-Za-z0-9_][./-])'+re.escape(token)+
+                                      r'(?![A-Za-z0-9_]|[./-][A-Za-z0-9])',text,re.I) is not None
+
+
+def _overlap(a,b):
+    return min(a[2],b[2])>max(a[0],b[0]) and min(a[3],b[3])>max(a[1],b[1])
+
+
+def _tagged_claim(finding):
+    match=re.match(r'^\s*relationship\s+(r[1-9][0-9]*)\s*:',finding.get('message') or '',re.I)
+    return match[1].lower() if match else None
+
+
+def finding_claims(finding,relations,nodes):
+    """Use explicit claim IDs, with conservative endpoint matching for older findings."""
+    tagged=_tagged_claim(finding)
+    if tagged is not None:
+        return {tagged} if int(tagged[1:])<=len(relations) else set()
+    text=re.sub(r'(?<=\d)[ \u00a0]+(?=\d)','',finding.get('message') or '')
+    if not re.search(r'\b(?:relationships?|edges?|touch(?:es)?|contact)\b',text,re.I):
+        return set()
+    def mentions(node):
+        return {rules.article_key(t).casefold() for t in (node['id'],node.get('article_id')) if _mentions(text,t)}
+    box=finding.get('bbox')
+    matches=[]
+    for i,r in enumerate(relations):
+        if not _no_locator(box) and not _overlap(r['bbox'],box):
+            continue
+        left,right=(mentions(nodes[r[side]]) for side in ('source','target'))
+        if r['source']!=r['target'] and any(a!=b for a in left for b in right):
+            matches.append((rules.claim_id(i),r))
+    named=[c for c,r in matches if any(_mentions(text,p) for p in (r['predicate'],r['predicate'].replace('_',' ')))]
+    return set(named or [c for c,_ in matches])
+
+
+def disputed_claims(findings,relations,nodes):
+    return set().union(*(finding_claims(f,relations,nodes) for f in findings if f['severity']=='error'))
+
+
+def unresolved_errors(findings,relations,nodes,decisions):
+    """Only explicit single-claim errors can be cleared by a committed rejection."""
+    return [f for f in findings if f['severity']=='error' and not (
+        (claim:=_tagged_claim(f)) and claim in finding_claims(f,relations,nodes) and decisions.get(claim)=='unsupported')]
+
+
+def _relationship_evidence_key(relation):
+    return (relation['source'],rules.canonical_predicate(relation['predicate']),relation['target'],
+            relation['basis'],relation['condition'],tuple(relation['bbox']),(relation.get('evidence') or '').strip())
 
 
 def canonical_id(kind, *scope):
@@ -108,7 +164,11 @@ def export(run,units,identity,status,costs,compare):
     for path in (run/'verifications').glob('*.json'):
         check=read(path)
         verdicts[check['unit_id']]=check['verdicts']
-    disputed_units={read(p)['unit_id'] for p in (run/'reviews').glob('*.json') if any(f['severity']=='error' for f in read(p)['findings'])}
+    # Review errors dispute only the relationships they name, never the whole region.
+    review_errors={}
+    for path in (run/'reviews').glob('*.json'):
+        review=read(path)
+        review_errors.setdefault(review['unit_id'],[]).extend(f for f in review['findings'] if f['severity']=='error')
     registry=defaultdict(list);entities=[];details=[];relations=[];measurements=[];tables=[];rows=[];instructions=[];questions=[];transcription=[];crops=[];records={};crop_plans=[]
     for path in sorted((run/'proposals').glob('*.json')):
         record=read(path);unit=record['unit'];uid=unit['unit_id'];n=unit['pdf_page']
@@ -155,10 +215,14 @@ def export(run,units,identity,status,costs,compare):
             elif article:questions.append(dict(category='ungrounded_article' if article_status=='ungrounded_article' else 'unresolved_article_label',message=article,article_status=article_status,provenance=e['provenance']))
         relation_keys=occurrence_keys(value['relations'],lambda r:[r['source'],r['predicate'],r['target'],r['basis'],r['condition']])
         decisions=rules.relation_verdicts(value['relations'],verdicts.get(uid,[]))
+        disputed=disputed_claims(review_errors.get(uid,[]),value['relations'],node_map)
+        rejected_edges={_relationship_evidence_key(r) for i,r in enumerate(value['relations'])
+                        if rules.claim_id(i) in disputed or decisions.get(rules.claim_id(i))=='unsupported'}
+        seen_edges=set()
         for i,(r,local) in enumerate(zip(value['relations'],relation_keys)):
             claim_id=rules.claim_id(i)
             verdict=decisions.get(claim_id,'missing')
-            rel_status,reasons=relationship_status(r,node_map[r['source']],node_map[r['target']],uid in disputed_units,
+            rel_status,reasons=relationship_status(r,node_map[r['source']],node_map[r['target']],claim_id in disputed,
                                                    scope=unit['bbox'],verification=verdict)
             for side in ('source','target'):
                 # An endpoint whose article ID is not printed on the page may be a hallucinated part.
@@ -169,9 +233,19 @@ def export(run,units,identity,status,costs,compare):
                     record['metadata'].get('method')=='reuse_exact_source_hash; no model call'):
                 reasons.append('legacy_review_unavailable')
                 if rel_status=='proposed':rel_status='unresolved'
+            predicate=rules.canonical_predicate(r['predicate'])
+            if rel_status=='proposed':
+                edge=_relationship_evidence_key(r)
+                if edge in rejected_edges:
+                    rel_status='unresolved'
+                    reasons.append('conflicting_duplicate_relationship')
+                elif edge in seen_edges:
+                    rel_status='unresolved'
+                    reasons.append('duplicate_relationship')
+                else:seen_edges.add(edge)
             if rel_status!='proposed':questions.append(dict(category='relationship_validation',message=f"{r['source']} -{r['predicate']}-> {r['target']}: {rel_status} ({', '.join(reasons)})",provenance=provenance(r['bbox'])))
             relations.append(dict(**r,source_node=scoped(r['source']),target_node=scoped(r['target']),
-                claim_id=claim_id,canonical_predicate=rules.canonical_predicate(r['predicate']),verification=verdict,
+                claim_id=claim_id,canonical_predicate=predicate,verification=verdict,
                 relationship_status=rel_status,status_reasons=reasons,graph_eligible=rel_status=='proposed',human_confirmed=False,
                 canonical_id=key('relationship',*local),canonical_source_id=entity_keys[r['source']],canonical_target_id=entity_keys[r['target']],
                 source_article_id=node_map[r['source']]['article_id'],target_article_id=node_map[r['target']]['article_id'],provenance=provenance(r['bbox'])))
