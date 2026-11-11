@@ -154,10 +154,11 @@ def _article(record, nodes, index, used):
         item['sources'] += [dict(page=p, kind='other', bbox=None, text=f"linked article {link['article_key']}") for p in link['pages']]
     if record.get('link_status') == 'variant_unresolved':
         item['missing_information'].append('variant not identified: ' + ', '.join(record.get('variant_candidates', [])))
-    explicit = bool(record.get('profile_id')) or bool(record.get('table_observations'))
+    inferred_identity = node.get('article_identity_basis')
+    explicit = (bool(record.get('profile_id')) and not inferred_identity) or bool(record.get('table_observations'))
     item['evidence_status'] = 'explicit' if explicit else 'visual'
     if not explicit:
-        item['inference_reason'] = 'part drawn in the detail without a printed article ID'
+        item['inference_reason'] = inferred_identity or 'part drawn in the detail without a printed article ID'
         item['missing_information'].append('article id not printed')
     return item
 

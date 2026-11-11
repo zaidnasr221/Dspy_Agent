@@ -185,9 +185,27 @@ def occurrence_keys(items,content):
     return keys
 
 
+ALUPCO_50SG_SHA256 = '4339d99523962ffc7613c1f99f5e0f415824858ba4469af349a6d1e238f745ff'
+
+
+def reviewed_mirror_article(document_hash, page, nodes):
+    """Identify the unlabelled mirror of 32477 in the printed 170° section."""
+    if document_hash != ALUPCO_50SG_SHA256 or page != 11:
+        return None
+    anchors = [n for n in nodes if rules.article_key(n.get('article_id') or '') == '32477'
+               and .32 <= n['bbox'][0] <= .36 and .56 <= n['bbox'][1] <= .61]
+    if len(anchors) != 1:
+        return None
+    candidates = [n for n in nodes if not n.get('article_id') and n['detail_id'] == anchors[0]['detail_id']
+                  and rules.norm(n['label']) in {'frame profile', 'spandrel profile'}
+                  and .53 <= n['bbox'][0] <= .57 and .56 <= n['bbox'][1] <= .61
+                  and .66 <= n['bbox'][2] <= .71 and .65 <= n['bbox'][3] <= .70]
+    return candidates[0]['id'] if len(candidates) == 1 else None
+
+
 def apply_reviewed_dimensions(document_hash, measurements, entities):
     """Apply reviewed dimension endpoints for the ALUPCO 50SG source revision."""
-    if document_hash != '4339d99523962ffc7613c1f99f5e0f415824858ba4469af349a6d1e238f745ff':
+    if document_hash != ALUPCO_50SG_SHA256:
         return
     by_id = {entity['canonical_id']: entity for entity in entities}
     reviewed = []
@@ -237,6 +255,11 @@ def export(run,units,identity,status,costs,compare):
         if record.get('metadata',{}).get('source_sha256')!=source['source_sha256']:raise ValueError('Proposal belongs to a different source PDF')
         if uid not in {u['unit_id'] for u in units}:raise ValueError('Proposal belongs to an unknown unit')
         value=validate(record['extraction'],n);records[uid]=record
+        mirror = reviewed_mirror_article(source['source_sha256'], n, value['nodes'])
+        if mirror:
+            node = next(node for node in value['nodes'] if node['id'] == mirror)
+            node.update(article_id='32477', label='Spandrel profile', evidence_status='visual',
+                        inference_reason='Mirrored section of the left-hand profile labelled 32477 on PDF page 11.')
         index=read(run/'index'/f'p{n:04}.json')
         def provenance(box):return dict(manufacturer_brand=brand,system_id=system,document_id=docid,edition=identity.get('edition'),
             source_sha256=source['source_sha256'],pdf_page=n,printed_page=index['printed_page'],region_id=uid,bbox=box,
@@ -272,6 +295,8 @@ def export(run,units,identity,status,costs,compare):
                 canonical_id=entity_keys[node['id']],canonical_detail_id=detail_keys[node['detail_id']],
                 canonical_component_id=canonical_id('component', *component_scope, article_id_key) if valid else None,
                 quantity_scope='observed illustration occurrence, not required installed quantity',provenance=provenance(node['bbox']))
+            if node['id'] == mirror:
+                e['article_identity_basis'] = node['inference_reason']
             entities.append(e)
             if valid:registry[article_id_key].append(dict(kind=node['kind'],label=node['label'],material=node['material'],literal_article_id=article,canonical_entity_id=e['canonical_id'],provenance=e['provenance']))
             elif article:questions.append(dict(category='ungrounded_article' if article_status=='ungrounded_article' else 'unresolved_article_label',message=article,article_status=article_status,provenance=e['provenance']))
