@@ -89,13 +89,18 @@ def publish(run, queue, units, identity, status, costs, compare):
                     if response.get(field):
                         raw = safe_path(run, response[field])
                         copy_file(raw, snapshot / raw.relative_to(run))
+            if stage == 'extract':
+                for trace in record.get('metadata', {}).get('fixing_traces', []):
+                    for path in [trace['receipt'], *trace.get('artifacts', [])]:
+                        artifact = safe_path(run, path)
+                        copy_file(artifact, snapshot / artifact.relative_to(run))
     for name in ('model_selection.json', 'cost_ledger.json', 'units.json', 'pilot_validation.json', 'catalogue_scope.json'):
         if (run / name).is_file():
             copy_file(run / name, snapshot / name)
     coverage = export(snapshot, units, identity, status, costs, compare)
     files = [snapshot / name for name in ('document.json', 'units.json')
              if (snapshot / name).is_file()]
-    for directory in ('proposals', 'reviews', 'verifications', 'imported_originals', 'raw_responses'):
+    for directory in ('proposals', 'reviews', 'verifications', 'imported_originals', 'raw_responses', 'fixing_traces'):
         files.extend(p for p in (snapshot / directory).rglob('*') if p.is_file())
     dump(snapshot / 'replay_manifest.json', dict(version=1,
         files={p.relative_to(snapshot).as_posix(): filehash(p) for p in sorted(files)}))

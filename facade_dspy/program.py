@@ -21,6 +21,7 @@ from .model import resolve_model,make_backend_factory
 from .locking import exclusive_lock
 from .profiling import PipelineProfiler
 from .publication import publish,published_directory
+from .fixing_trace import trace_empty_paths
 
 READING_RULES='''You are reading one region of a facade/curtain-wall system catalogue page.
 Goal: a faithful record of what the page shows: every part, every printed value, and how the parts
@@ -243,7 +244,8 @@ class FacadeExtractionAgent(dspy.Module):
 
     def __init__(self,out='runs',budget_usd=None,reserve_usd=.5,cli_budget_usd=.15,model=None,
                  command=None,accept_cli_estimates=False,reuse=None,replay=False,pilot_pages=None,compare=None,
-                 index_only=False,backend_factory=None,profile=False,backend=None,target_pages=None,trace=False,relation_feedback=False):
+                 index_only=False,backend_factory=None,profile=False,backend=None,target_pages=None,trace=False,relation_feedback=False,
+                 trace_fixing_paths=False):
         super().__init__()
         load_dotenv(Path(__file__).resolve().parents[1]/'.env', override=False)
         self.model_config=resolve_model(backend,model)
@@ -255,6 +257,9 @@ class FacadeExtractionAgent(dspy.Module):
         if self.target_pages and (replay or reuse):
             raise ValueError("Target pages require a fresh extraction; replay the published snapshot without target pages")
         self.relation_feedback = relation_feedback
+        self.trace_fixing_paths = trace_fixing_paths
+        if trace_fixing_paths and self.model_config.backend != 'openai':
+            raise ValueError('Tight-crop fixing traces require the direct OpenAI backend')
         self.support_plan={}
         self.backend=None;self.queue=None;self.run=None
         self.profiling=PipelineProfiler(self.out,profile,'index_only' if index_only else 'replay' if replay else 'full',trace=trace)
@@ -304,6 +309,12 @@ class FacadeExtractionAgent(dspy.Module):
                 repairs['notes'].append('Drawing reference '+code+' removed from article field; original reply retained.')
                 next(d for d in value['details'] if d['id']==node['detail_id'])['drawing_refs'].append(code)
         value=self.profiling.call('structural_validation',validate,value,unit['pdf_page'])
+        fixing_traces = []
+        if self.trace_fixing_paths:
+            fixing_traces = trace_empty_paths(value, self.run/'source.pdf',
+                                              self.run/'fixing_traces'/objecthash(unit_id)[:20],
+                                              self.backend, self._heartbeat)
+            value = validate(value, unit['pdf_page'])
         for span in visual.source_text:
             a,b,c,d=span.bbox
             if not 0<=a<=c<=1 or not 0<=b<=d<=1:raise ValueError('Invalid transcription locator')
@@ -312,7 +323,9 @@ class FacadeExtractionAgent(dspy.Module):
                 method={'openai':'OpenAI Responses visual reading','opencode':'OpenCode/OpenAI visual reading',
                          'claude-code':'Claude Code visual reading'}[self.model_config.backend],
                 backend=self.model_config.backend,model=self.model,
-                representation_repairs=repairs,tool_receipt=reply,bbox_precision='approximate full-page evidence locator; not CAD geometry'))
+                representation_repairs=repairs,tool_receipt=reply,
+                **({'fixing_traces': fixing_traces} if fixing_traces else {}),
+                bbox_precision='approximate full-page evidence locator; not CAD geometry'))
 
     def _review_visual(self,unit_id:str)->dict:
         unit=next(u for u in self.units if u['unit_id']==unit_id);record=read(result_path(self.run,unit))
@@ -522,12 +535,15 @@ class FacadeExtractionAgent(dspy.Module):
             search=self.run/'search_ocr_v1'/f'p{unit["pdf_page"]:04}.json'
             if search.exists():evidence.append(search)
         if self.model_config.backend=='openai':evidence.append(Path(__file__).with_name('openai_api.py'))
+        if self.trace_fixing_paths:
+            evidence.append(Path(__file__).with_name('fixing_trace.py'))
         self.queue.register(jid,'region_extraction',unit['unit_id'],evidence+[path,self.run/'index'/f'p{unit["pdf_page"]:04}.json',
             self.run/'identity.json',Path(__file__)]+[Path(__file__).with_name(name) for name in
             ['schema.py','normalize.py','source.py','claude_tool.py','opencode_tool.py','model.py','tool_protocol.py','budget.py','importer.py','rules.py']]+
             [Path(__file__).parent/'knowledge'/name for name in ('system_profiles.json','catalogue_conventions.json')]+
             ([self.run/'model_selection.json'] if (self.run/'model_selection.json').exists() else []),
-            [f'p{unit["pdf_page"]:04}:index']+[f'p{item["pdf_page"]:04}:index' for item in support],{'scope':unit})
+            [f'p{unit["pdf_page"]:04}:index']+[f'p{item["pdf_page"]:04}:index' for item in support],
+            {'scope':unit, **({'trace_fixing_paths': True} if self.trace_fixing_paths else {})})
         return jid
 
     def forward(self,pdf_url:str):
@@ -668,7 +684,12 @@ class FacadeExtractionAgent(dspy.Module):
                         receipt=record['metadata']['tool_receipt']
                         outputs=[target]
                         if receipt.get('raw_response'):outputs.append(safe_path(self.run,receipt['raw_response']))
-                        return {'outputs':outputs,'new_api_cost_usd':0 if receipt.get('cache_hit') else receipt.get('reported_cost_usd',0),'review_status':'proposed'}
+                        traces = record['metadata'].get('fixing_traces', [])
+                        for trace in traces:
+                            outputs.extend(safe_path(self.run, path) for path in [trace['receipt'], *trace['artifacts']])
+                        cost = 0 if receipt.get('cache_hit') else receipt.get('reported_cost_usd') or 0
+                        return {'outputs':outputs,'new_api_cost_usd':cost + sum(t['reported_cost_usd'] for t in traces),
+                                'review_status':'proposed'}
                     self.queue.run(jid,extract)
                 except BudgetStopped:return self._finish('budget_stopped')
                 except (AuthenticationFailure,InsufficientCredits,RateLimitFailure):raise

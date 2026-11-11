@@ -261,6 +261,19 @@ def main():
 
 
 def finish(out, source, baseline, units, pages, result, costs):
+    export_with_context(out, source, units, costs, 'refine_completed')
+    base, saved, refined = (read(path / 'data/detail_outputs.json') for path in (baseline, source, out))
+    comparisons = {}
+    for page in pages:
+        reference, before, after = (page_records(rows, page) for rows in (base, saved, refined))
+        comparisons[str(page)] = {key: dict(before=difference(reference[key], before[key]),
+                                           after=difference(reference[key], after[key]))
+                                  for key in ('assemblies', 'measurements')}
+    dump(out / 'report.json', dict(pages=comparisons, refinements=result, cost=costs))
+    print(out / 'report.json')
+
+
+def export_with_context(out, source, units, costs, status):
     document = read(source / 'document.json')
     identity = Identity.model_validate({key: document[key] for key in Identity.model_fields}).model_dump()
     # Preserve the saved catalogue context so cross-page links and dimensions
@@ -279,16 +292,8 @@ def finish(out, source, baseline, units, pages, result, costs):
         image = f"p{unit['pdf_page']:04}.png"
         if not (out / 'images' / image).is_file():
             shutil.copy2(source / 'images' / image, out / 'images' / image)
-    export(out, all_units, identity, 'refine_completed', costs, [])
-    base, saved, refined = (read(path / 'data/detail_outputs.json') for path in (baseline, source, out))
-    comparisons = {}
-    for page in pages:
-        reference, before, after = (page_records(rows, page) for rows in (base, saved, refined))
-        comparisons[str(page)] = {key: dict(before=difference(reference[key], before[key]),
-                                           after=difference(reference[key], after[key]))
-                                  for key in ('assemblies', 'measurements')}
-    dump(out / 'report.json', dict(pages=comparisons, refinements=result, cost=costs))
-    print(out / 'report.json')
+    dump(out / 'units.json', all_units)
+    export(out, all_units, identity, status, costs, [])
 
 
 if __name__ == '__main__':
