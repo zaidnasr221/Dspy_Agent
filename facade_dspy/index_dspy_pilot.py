@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import dspy
+import pymupdf
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
@@ -13,7 +14,7 @@ from .budget import Budget
 from .openai_api import OpenAIResponses
 from .publication import published_directory
 from .rules import article_key
-from .storage import dump, read
+from .storage import dump, filehash, read
 from .tool_protocol import IncompleteRead
 
 
@@ -192,9 +193,32 @@ def run_page(page, source, out, backend, index):
     return result
 
 
+def prepare_pdf(pdf, source, pages, index):
+    """Render full target pages and indexed support candidates from the original PDF."""
+    identity = source / 'document.json'
+    sha256 = filehash(pdf)
+    if identity.exists() and read(identity)['sha256'] != sha256:
+        raise ValueError('Source PDF changed. Use a new output directory.')
+    support = {fact.get('page') for row in index.values() for facts in row.get('properties', {}).values()
+               for fact in facts if fact.get('portable') and isinstance(fact.get('page'), int)}
+    with pymupdf.open(pdf) as document:
+        if any(not 1 <= page <= len(document) for page in pages):
+            raise ValueError(f'Physical page numbers must be between 1 and {len(document)}')
+        images = source / 'images'
+        images.mkdir(parents=True, exist_ok=True)
+        for number in sorted(set(pages) | {n for n in support if 1 <= n <= len(document)}):
+            path = images / f'p{number:04}.png'
+            if not path.exists():
+                page = document[number - 1]
+                scale = 2000 / max(page.rect.width, page.rect.height)
+                page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False).save(path)
+        dump(identity, dict(sha256=sha256, page_count=len(document)))
+    return source
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('catalogue', type=Path)
+    parser.add_argument('catalogue', type=Path, help='Local PDF or saved catalogue output directory')
     parser.add_argument('--pages', type=int, nargs='+', required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--budget-usd', type=float, required=True)
@@ -204,10 +228,15 @@ def main():
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
     load_dotenv()
-    source = published_directory(args.catalogue)
-    index = read(args.index or source / 'data/article_index.json')
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=args.resume)
+    if args.catalogue.is_file():
+        index = read(args.index) if args.index else {}
+        source = prepare_pdf(args.catalogue, out / 'source_input', args.pages, index)
+    else:
+        source = published_directory(args.catalogue)
+        index_path = args.index or source / 'data/article_index.json'
+        index = read(index_path) if args.index or index_path.is_file() else {}
     budget = Budget(out, args.budget_usd, .06)
     backend = OpenAIResponses(out, budget, 'gpt-6.1-sol', reasoning_effort=args.reasoning_effort)
     def extract(page):

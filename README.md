@@ -1,10 +1,77 @@
-# Facade extraction with DSPy, Claude Code and OpenCode/OpenAI
+# Facade catalogue extraction with DSPy
+
+The full-page reader uses GPT-6.1 Sol at low reasoning by default. It reads
+original PDF pages as images and produces structured part occurrences, visible
+relationships, measurements, and questions for the article index. It uses
+full-page images without requiring crops, bounding boxes, native text, or OCR.
+
+## Quick start
+
+Use Python 3.11 or later. Run these commands from the repository root:
+
+```powershell
+py -3.11 -m venv .venv
+$Python = ".\.venv\Scripts\python.exe"
+& $Python -m pip install -e .
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Set `OPENAI_API_KEY` in `.env` or in your environment.
+
+Read physical PDF pages 5–8 from a local catalogue:
+
+```powershell
+$Pdf = "data/MX_conc_va_4566.002.pdf"
+$Out = "runs/mx_5_8_sol_low"
+& $Python -m facade_dspy.index_dspy_pilot $Pdf --pages (5..8) --out $Out `
+    --reasoning-effort low --workers 4 --budget-usd 1
+```
+
+For the full ALUPCO 50SG catalogue, use the PDF
+`data/ALUPCO50SG CAT.(3rd ED 2011).pdf`, `--pages (1..110)`, and a new
+output directory. Choose a cumulative budget for the run. If a page fails,
+rerun the same command with `--resume` to reuse the completed pages.
+
+To resolve dimensions from support pages, add
+`--index "path/to/same-catalogue/data/article_index.json"` when you have an
+article index for the same PDF. The reader retrieves portable facts by exact
+article ID, then checks them against the original support page. A new PDF can
+run without an existing index. The host check below builds an occurrence
+index from that run.
+
+## Check ambiguous cleat hosts
+
+Run this after the page read finishes. It finds cleat insertions with multiple
+plausible hosts, retrieves support drawings from the same catalogue, and checks
+which labelled profile encloses the pocket. Read enough pages to include
+support drawings. For the ALUPCO cleat on page 19, include page 20.
+
+```powershell
+& $Python -m facade_dspy.index_host_check $Out --images "$Out/source_input/images" `
+    --workers 4 --budget-usd 1
+```
+
+The budget is cumulative across both commands when they use the same output
+directory. The host check also uses Sol low.
+
+- `pilot.json` contains the page results, source evidence, dependency resolutions,
+  and any page errors. Individual results are under `page-N/result.json`.
+- `article_occurrence_index.json` maps article IDs to observed pages and occurrences.
+- `host_checks/report.json` records the original and checked hosts, support pages,
+  and unresolved decisions. The original extraction stays available in `pilot.json`.
+
+The full-page reader is for assembly observations and dimensions. It does not
+export performance-table rows or combine screw observations into ordered fixing
+paths. A match against a previous run measures agreement. Use the original
+drawing to decide whether a difference is an error.
+
+## Region-based pipeline
 
 **Input:** a PDF URL. **Process:** index → read images → validate → check a pilot → extract remaining regions → reconcile. **Output:** source-linked HTML, JSON, Parquet, CSV and an optional data ZIP.
 
 `FacadeExtractionAgent` is a real `dspy.Module` with three `dspy.Tool` calls: inspect document identity, read a region, and check a proposed region against its source. Local code selects jobs and enforces checks. It does not need another model to plan the workflow. No DSPy optimizer or training run is included.
 
-## Quick start with OpenCode and OpenAI
+### Quick start with OpenCode and OpenAI
 
 OpenCode is the default backend and uses `openai/gpt-6.1-sol`. On a new Windows
 checkout, use Python 3.11+ and Node.js with npm, then run the following from
@@ -40,7 +107,7 @@ Run the full pipeline with a budget you authorize. This example uses the local
 ALUPCO PDF. Set `$Pdf` to another local PDF path or a direct PDF URL as needed.
 
 ```powershell
-$Pdf = (Resolve-Path -LiteralPath '.\data\50SG ALUPCO PDF COMBINED.pdf').Path
+$Pdf = (Resolve-Path -LiteralPath '.\data\ALUPCO50SG CAT.(3rd ED 2011).pdf').Path
 $Out = Join-Path (Get-Location).Path ('runs\opencode_' + [guid]::NewGuid().ToString('N'))
 $Budget = Read-Host 'Authorized cumulative budget in USD, using a decimal point'
 if ($Budget -notmatch '^[0-9]+(\.[0-9]+)?$' -or [double]$Budget -lt 0.50) {
@@ -72,6 +139,7 @@ extra DSPy planner model were added.
 | Backend | Default model | Required variable |
 |---|---|---|
 | `opencode` (default) | `openai/gpt-6.1-sol` | `OPENAI_API_KEY` |
+| `openai` | `gpt-6.1-sol` | `OPENAI_API_KEY` |
 | `claude-code` | `claude-sonnet-5-5` | `ANTHROPIC_API_KEY` |
 
 Selection precedence: explicit `--backend` / `--model` (or Python arguments),
