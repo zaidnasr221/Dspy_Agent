@@ -1,5 +1,5 @@
 """Source-scoped analytical exports and an offline searchable HTML review."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 import html
 import json
@@ -172,6 +172,90 @@ def _relationship_evidence_key(relation):
                             engagement=relation.get('engages_in'), offsets=relation.get('distance_offsets') or [])))
 
 
+_VISIBLE_CONTACT = re.compile(r"^the (?:[\w/-]+ ){0,6}(?:meets|abuts|touches|contacts|lies against|reaches) "
+                              r"(?:the |profile |glass\b|pane\b)", re.I)
+
+
+def verified_contacts(relations, verdicts, decisions, disputed, scope):
+    """Retain a positively observed interface when the mechanism was uncertain."""
+    evidence = defaultdict(list)
+    for verdict in verdicts:
+        evidence[verdict.get('claim_id')].append(verdict)
+    occupied = {(frozenset((r['source'], r['target'])), r['condition'])
+                for i, r in enumerate(relations)
+                if decisions.get(rules.claim_id(i)) in {'supported', 'unsupported'} or rules.claim_id(i) in disputed}
+    contacts = []
+    for i, relation in enumerate(relations):
+        ident = rules.claim_id(i)
+        pair = (frozenset((relation['source'], relation['target'])), relation['condition'])
+        if (pair in occupied or decisions.get(ident) != 'uncertain'
+                or rules.canonical_predicate(relation['predicate']) not in {'seals_against', 'bonded_to'}):
+            continue
+        checks = evidence[ident]
+        if len(checks) != 1 or rules.relation_key(checks[0]) != rules.relation_key(relation):
+            continue
+        check = checks[0]
+        box, reason = check['bbox'], check['reason'].strip()
+        observed = check.get('observed_contact')
+        # Older receipts often state the observation in a positive opening clause.
+        if observed is None:
+            clause = re.split(r'[,;]|\bbut\b|\bwithout\b', reason, maxsplit=1)[0]
+            observed = bool(_VISIBLE_CONTACT.match(clause)) and not re.search(
+                r'\b(?:may|might|appears?|possibly|unclear|not|seems?)\b', clause, re.I)
+        if (not observed or not reason or _no_locator(box) or not _inside(box, scope, rules.SCOPE_TOLERANCE)
+                or not _overlap(box, relation['bbox'])):
+            continue
+        contacts.append(dict(source=relation['source'], predicate='contacts', target=relation['target'],
+                             basis='drawing_reading', condition=relation['condition'], bbox=box, evidence=reason,
+                             relation_type='other', relation_clarification='Visible physical contact',
+                             evidence_status='visual', recovered_from_claim=ident))
+        occupied.add(pair)
+    return contacts
+
+
+_INSERTION_HOST = re.compile(
+    r'^The chamber containing (?:[a-z-]+ )*([A-Z0-9-]+) belongs to [^,]+? ([A-Z0-9-]+), not\b', re.I)
+
+
+def verified_insertions(relations, verdicts, decisions, disputed, scope, nodes):
+    """Recover an insertion when the verifier explicitly identifies the corrected chamber."""
+    occupied = {(r['source'], r['target'], r['condition']) for r in relations
+                if rules.canonical_predicate(r['predicate']) == 'inserted_into'}
+    claims = {rules.claim_id(i): r for i, r in enumerate(relations)}
+    insertions = []
+    counts = Counter(v.get('claim_id') for v in verdicts)
+    for check in verdicts:
+        ident = check.get('claim_id')
+        relation = claims.get(ident)
+        if (not relation or counts[ident] != 1 or ident in disputed or not check['reason'].strip()
+                or decisions.get(ident) != 'unsupported'
+                or rules.canonical_predicate(relation['predicate']) != 'inserted_into'
+                or rules.relation_key(check) != rules.relation_key(relation)):
+            continue
+        source = nodes[relation['source']]
+        article = check.get('observed_insertion_target')
+        if not article:
+            match = _INSERTION_HOST.match(check['reason'].strip())
+            if not match or rules.article_key(source.get('article_id') or '') != rules.article_key(match[1]):
+                continue
+            article = match[2]
+        targets = [node['id'] for node in nodes.values() if node['detail_id'] == source['detail_id']
+                   and node.get('article_id') and rules.article_key(node['article_id']) == rules.article_key(article)]
+        box = check['bbox']
+        if len(targets) != 1 or _no_locator(box) or not _inside(box, scope, rules.SCOPE_TOLERANCE):
+            continue
+        target = targets[0]
+        key = (source['id'], target, relation['condition'])
+        if key in occupied or not _overlap(box, relation['bbox']) or not _overlap(box, nodes[target]['bbox']):
+            continue
+        occupied.add(key)
+        insertions.append(dict(source=source['id'], predicate='inserted_into', target=target,
+                               basis='drawing_reading', condition=relation['condition'], bbox=box,
+                               evidence=check['reason'], relation_type='insertion',
+                               evidence_status='visual', recovered_from_claim=ident))
+    return insertions
+
+
 def canonical_id(kind, *scope):
     """Build deterministic typed keys from separate scope segments."""
     return kind + ':' + objecthash([kind, *scope])
@@ -301,15 +385,19 @@ def export(run,units,identity,status,costs,compare):
             entities.append(e)
             if valid:registry[article_id_key].append(dict(kind=node['kind'],label=node['label'],material=node['material'],literal_article_id=article,canonical_entity_id=e['canonical_id'],provenance=e['provenance']))
             elif article:questions.append(dict(category='ungrounded_article' if article_status=='ungrounded_article' else 'unresolved_article_label',message=article,article_status=article_status,provenance=e['provenance']))
-        relation_keys=occurrence_keys(value['relations'],lambda r:[r['source'],r['predicate'],r['target'],r['basis'],r['condition']])
-        decisions=rules.relation_verdicts(value['relations'],verdicts.get(uid,[]))
+        checks = verdicts.get(uid, [])
+        decisions=rules.relation_verdicts(value['relations'],checks)
         disputed=disputed_claims(review_errors.get(uid,[]),value['relations'],node_map)
+        recovered_relations = verified_contacts(value['relations'], checks, decisions, disputed, unit['bbox'])
+        recovered_relations += verified_insertions(value['relations'], checks, decisions, disputed, unit['bbox'], node_map)
+        all_relations = value['relations'] + recovered_relations
+        relation_keys=occurrence_keys(all_relations,lambda r:[r['source'],r['predicate'],r['target'],r['basis'],r['condition']])
         rejected_edges={_relationship_evidence_key(r) for i,r in enumerate(value['relations'])
                         if rules.claim_id(i) in disputed or decisions.get(rules.claim_id(i))=='unsupported'}
         seen_edges=set()
-        for i,(r,local) in enumerate(zip(value['relations'],relation_keys)):
+        for i,(r,local) in enumerate(zip(all_relations,relation_keys)):
             claim_id=rules.claim_id(i)
-            verdict=decisions.get(claim_id,'missing')
+            verdict='supported' if i >= len(value['relations']) else decisions.get(claim_id,'missing')
             rel_status,reasons=relationship_status(r,node_map[r['source']],node_map[r['target']],claim_id in disputed,
                                                    scope=unit['bbox'],verification=verdict,nodes=node_map)
             endpoint_refs={side:r[side] for side in ('source','target')}

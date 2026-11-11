@@ -72,6 +72,7 @@ PREDICATES = {
                       ('fits_into', 'installed_in', 'inserted_in', 'slides_into', 'located_in')),
     'clipped_into': ('SOURCE snaps or clips onto/into TARGET.', ('clipped_to', 'snapped_into', 'clips_into')),
     'seals_against': ('Gasket/seal SOURCE presses against TARGET to seal.', ('sealed_against',)),
+    'contacts': ('SOURCE and TARGET visibly touch along an interface; no function or attachment is implied.', ('touches',)),
     'supports': ('SOURCE carries the load of TARGET (setting block, bracket).', ('carries', 'bears')),
     'supported_by': ('SOURCE rests on TARGET.', ('rests_on', 'sits_on', 'carried_by')),
     'bonded_to': ('SOURCE is glued or structurally bonded to TARGET.', ('glued_to', 'structurally_bonded_to')),

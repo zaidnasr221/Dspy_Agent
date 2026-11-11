@@ -22,6 +22,17 @@ def part_name(label):
     return LABEL_ALIASES.get(label, label)
 
 
+def occurrence_name(article, page):
+    """Remove an export-added occurrence suffix when the source label confirms it."""
+    label = norm(article['label'])
+    match = re.fullmatch(r'(.+) \([\w-]+\)', label)
+    if match and any(source.get('page') == page and source.get('kind') == 'detail'
+                     and norm(source.get('text') or '') == match[1]
+                     for source in article.get('sources', [])):
+        return part_name(match[1])
+    return part_name(label)
+
+
 def page_records(details, page):
     rows = [detail for detail in details if detail['page'] == page]
     articles, assemblies, measurements = Counter(), Counter(), Counter()
@@ -30,7 +41,7 @@ def page_records(details, page):
         occurrences = {}
         for article in detail['article_database']:
             literal = article.get('profile_id')
-            identity = article_key(literal) if literal else part_name(article['label'])
+            identity = article_key(literal) if literal else occurrence_name(article, page)
             occurrences[article['occurrence_id']] = identity
             if literal:
                 articles[identity] += 1

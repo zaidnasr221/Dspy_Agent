@@ -240,6 +240,8 @@ class RelationVerdict(Record):
     verdict:Literal['supported','unsupported','uncertain']
     reason:str
     bbox:list[float]=Field(min_length=4,max_length=4)
+    observed_contact:bool|None=None
+    observed_insertion_target:str|None=None
 
 
 class RelationCheck(Record):

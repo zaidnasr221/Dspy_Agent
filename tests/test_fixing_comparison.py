@@ -27,3 +27,11 @@ def test_fixing_match_is_independent_of_ordered_path():
     assert reference['fixing_paths'] == equivalent['fixing_paths']
     assert not missing['fixing_paths']
     assert reference['fixing_paths'] != reversed_path['fixing_paths']
+
+def test_occurrence_suffix_needs_matching_source_label():
+    from facade_dspy.compare_batch import occurrence_name
+
+    row = dict(label='Double glazing unit (glassR)',
+               sources=[dict(page=10, kind='detail', text='Double glazing unit')])
+    assert occurrence_name(row, 10) == 'double glazing unit'
+    assert occurrence_name(row, 11) == 'double glazing unit (glassr)'
