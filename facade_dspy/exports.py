@@ -7,6 +7,7 @@ import re
 
 import pymupdf
 from .catalogue_databases import build_databases
+from .dimension_geometry import recover_depths
 from . import articles as article_index
 from . import assembly as detail_assembly
 from . import references as cross_references
@@ -340,8 +341,13 @@ def export(run,units,identity,status,costs,compare):
                 canonical_id=key('relationship',*local),canonical_source_id=entity_keys[r['source']],canonical_target_id=entity_keys[r['target']],
                 canonical_fastener_id=entity_keys.get(r.get('fastener_id')),
                 source_article_id=node_map[r['source']]['article_id'],target_article_id=node_map[r['target']]['article_id'],provenance=provenance(r['bbox'])))
-        measurement_keys=occurrence_keys(value['measurements'],lambda m:[m['subject'],m['property'],m['value'],m['unit'],m['datum'],m['condition']])
-        for m,local in zip(value['measurements'],measurement_keys):
+        recovered = []
+        if record.get('source_text') and any(m['subject'] in detail_keys for m in value['measurements']):
+            with pymupdf.open(run/'source.pdf') as pdf:
+                recovered = recover_depths(value, record['source_text'], pdf[n-1])
+        all_measurements = value['measurements'] + recovered
+        measurement_keys=occurrence_keys(all_measurements,lambda m:[m['subject'],m['property'],m['value'],m['unit'],m['datum'],m['condition']])
+        for i,(m,local) in enumerate(zip(all_measurements,measurement_keys)):
             item=dict(m)
             if item['unit'] in ['','unknown','(none)']:item['unit']=None
             # Match the legacy full-page merge's node-first resolution of shared local IDs.
@@ -351,7 +357,10 @@ def export(run,units,identity,status,costs,compare):
             if denominator is not None and subject in node_map and denominator['detail_id']==node_map[subject]['detail_id']:
                 item.update(per_article=denominator['article_id'] or denominator['label'],
                             per_occurrence_id=entity_keys[denominator['id']])
-            measurements.append(dict(**item,canonical_id=key('measurement',*local),canonical_subject_id=subject_id,provenance=provenance(m['bbox'])))
+            origin = provenance(m['bbox'])
+            if i >= len(value['measurements']):
+                origin['reading_method'] = 'PDF dimension bar and profile contour alignment'
+            measurements.append(dict(**item,canonical_id=key('measurement',*local),canonical_subject_id=subject_id,provenance=origin))
         for t in value['tables']:
             table_key = key('table',t['id'])
             tables.append(dict(id=t['id'],canonical_id=table_key,title=t['title'],columns=t['columns'],
