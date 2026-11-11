@@ -227,13 +227,23 @@ def existing_bundle(folder,source_sha):
     return folder,doc,result,metadata
 
 
+def relation_feedback_items(candidates, verdicts):
+    """Limit the follow-up to uncertain or unanswered claims."""
+    by_id = {verdict['claim_id']: verdict for verdict in verdicts}
+    return {
+        claim_id: by_id[claim_id]['reason'] if claim_id in by_id else 'No verdict returned'
+        for claim_id, _ in candidates
+        if claim_id not in by_id or by_id[claim_id]['verdict'] == 'uncertain'
+    }
+
+
 class FacadeExtractionAgent(dspy.Module):
     """Fixed-stage tool agent: evidence jobs, not an unbounded model-controlled loop."""
     signature=CatalogueSignature
 
     def __init__(self,out='runs',budget_usd=None,reserve_usd=.5,cli_budget_usd=.15,model=None,
                  command=None,accept_cli_estimates=False,reuse=None,replay=False,pilot_pages=None,compare=None,
-                 index_only=False,backend_factory=None,profile=False,backend=None,target_pages=None,trace=False):
+                 index_only=False,backend_factory=None,profile=False,backend=None,target_pages=None,trace=False,relation_feedback=False):
         super().__init__()
         load_dotenv(Path(__file__).resolve().parents[1]/'.env', override=False)
         self.model_config=resolve_model(backend,model)
@@ -244,6 +254,7 @@ class FacadeExtractionAgent(dspy.Module):
         self.target_pages=tuple(dict.fromkeys(target_pages or ()))
         if self.target_pages and (replay or reuse):
             raise ValueError("Target pages require a fresh extraction; replay the published snapshot without target pages")
+        self.relation_feedback = relation_feedback
         self.support_plan={}
         self.backend=None;self.queue=None;self.run=None
         self.profiling=PipelineProfiler(self.out,profile,'index_only' if index_only else 'replay' if replay else 'full',trace=trace)
@@ -326,11 +337,12 @@ class FacadeExtractionAgent(dspy.Module):
         return [(rules.claim_id(i),r) for i,r in enumerate(value['relations']) if relationship_status(r,nodes[r['source']],nodes[r['target']],False,
                 scope=record['unit']['bbox'],nodes=nodes)[0]=='proposed']
 
-    def _verify_relations(self,unit_id:str)->dict:
+    def _verify_relations(self,unit_id:str, feedback:dict|None=None)->dict:
         """Ask the reader to confirm each statically valid relationship against the page images."""
         from .exports import _inside,_no_locator,_overlap
         unit=next(u for u in self.units if u['unit_id']==unit_id);record=read(result_path(self.run,unit))
-        folder=self.run/'relation_inputs'/objecthash(unit_id)[:20]
+        input_directory = 'relation_feedback_inputs' if feedback is not None else 'relation_inputs'
+        folder = self.run/input_directory/objecthash(unit_id)[:20]
         focus=self.profiling.call('image_preparation',prepare_images,self.run,unit,folder)
         nodes={n['id']:n for n in record['extraction']['nodes']}
         part=lambda n:dict(id=n['id'],kind=n['kind'],label=n['label'],article_id=n['article_id'],callout=n['callout'],bbox=n['bbox'])
@@ -345,8 +357,15 @@ class FacadeExtractionAgent(dspy.Module):
                      fixing_evidence=r.get('fixing_evidence'), fastener_position=r.get('fastener_position'),
                      fastener_size=r.get('fastener_size'), distance_offsets=r.get('distance_offsets') or [])
                 for ident,r in self.candidate_relations(record)]
+        if feedback is not None:
+            claims = [claim for claim in claims if claim['claim_id'] in feedback]
+            dump(folder/'feedback.json', feedback)
         dump(folder/'relations.json',claims)
         prompt=RELATION_RULES+self._support_inputs(unit,folder)+'FOCUS PAGE BOX (full-page coordinates): '+json.dumps(focus)+'\nUNIT: '+json.dumps(unit)
+        if feedback is not None:
+            prompt += ('\nRecheck only the claims in relations.json. Use feedback.json to locate missing evidence. '
+                       'Confirm endpoints and the complete fixing path from the drawing. '
+                       'If evidence is still insufficient, keep the verdict uncertain.')
         reply=self.backend.execute('relation_check',prompt,RelationCheck.model_json_schema(),folder,self._heartbeat)
         check=RelationCheck.model_validate(reply['output'])
         if check.unit_id!=unit_id:raise ValueError('Relationship check belongs to another region')
@@ -373,14 +392,35 @@ class FacadeExtractionAgent(dspy.Module):
         if record is None or not self.candidate_relations(record):return None
         uid=unit['unit_id'];target=self.run/'verifications'/(objecthash(uid)[:24]+'.json');job=uid+':relation_check'
         self.queue.register(job,'relationship_verification',uid,[result_path(self.run,unit),Path(__file__),
-                            Path(__file__).with_name('rules.py')],[jid],{'review_status':'model_check_not_human_approval'})
+                            Path(__file__).with_name('rules.py')],[jid],{'review_status':'model_check_not_human_approval', **({'relation_feedback': True} if self.relation_feedback else {})})
         state=self._resumable_job_state(job)
         if state!='pending':return None # completed, or failed/stale: relations stay unverified, no blind paid retry
         def verify(spec):
-            check=self.profiling.call('relationship_verification',self.verify_relations,unit_id=uid);dump(target,check)
-            receipt=check['tool_receipt'];outputs=[target]
-            if receipt.get('raw_response'):outputs.append(safe_path(self.run,receipt['raw_response']))
-            return {'outputs':outputs,'new_api_cost_usd':0 if receipt.get('cache_hit') else receipt.get('reported_cost_usd',0)}
+            check = self.profiling.call('relationship_verification', self.verify_relations, unit_id=uid)
+            receipts = [check['tool_receipt']]
+            if self.relation_feedback:
+                feedback = relation_feedback_items(self.candidate_relations(record), check['verdicts'])
+                if feedback:
+                    try:
+                        revised = self.profiling.call('relationship_feedback', self.verify_relations,
+                                                      unit_id=uid, feedback=feedback)
+                    except (AuthenticationFailure, InsufficientCredits, RateLimitFailure):
+                        raise
+                    except Exception as error:
+                        check['feedback_error'] = type(error).__name__
+                        revised = None
+                    if revised is not None:
+                        receipts.append(revised['tool_receipt'])
+                        check['initial_verdicts'] = check['verdicts']
+                        revised_ids = {verdict['claim_id'] for verdict in revised['verdicts']}
+                        check['verdicts'] = [v for v in check['verdicts'] if v['claim_id'] not in revised_ids]
+                        check['verdicts'].extend(revised['verdicts'])
+                        check['feedback_receipt'] = revised['tool_receipt']
+            dump(target, check)
+            outputs = [target] + [safe_path(self.run, receipt['raw_response'])
+                                  for receipt in receipts if receipt.get('raw_response')]
+            return {'outputs': outputs, 'new_api_cost_usd': sum(
+                receipt.get('reported_cost_usd') or 0 for receipt in receipts if not receipt.get('cache_hit'))}
         try:self.queue.run(job,verify)
         except BudgetStopped:return 'budget_stopped'
         except (AuthenticationFailure,InsufficientCredits,RateLimitFailure):raise

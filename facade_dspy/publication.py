@@ -84,10 +84,11 @@ def publish(run, queue, units, identity, status, costs, compare):
                 source = safe_path(run, original)
                 copy_file(source, snapshot / source.relative_to(run))
             receipt = record.get('metadata', {}).get('tool_receipt', {}) if stage == 'extract' else record.get('tool_receipt', {})
-            for field in ('raw_response', 'read_validation'):
-                if receipt.get(field):
-                    raw = safe_path(run, receipt[field])
-                    copy_file(raw, snapshot / raw.relative_to(run))
+            for response in (receipt, record.get('feedback_receipt', {})):
+                for field in ('raw_response', 'read_validation'):
+                    if response.get(field):
+                        raw = safe_path(run, response[field])
+                        copy_file(raw, snapshot / raw.relative_to(run))
     for name in ('model_selection.json', 'cost_ledger.json', 'units.json', 'pilot_validation.json', 'catalogue_scope.json'):
         if (run / name).is_file():
             copy_file(run / name, snapshot / name)

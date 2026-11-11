@@ -63,6 +63,7 @@ def build_parser():
     parser.add_argument('--index-only',action='store_true',help='Download/render/index locally, with no model calls')
     parser.add_argument('--profile',action='store_true',help='Save Pyinstrument HTML and stage timings in a new out/profiles/ folder')
     parser.add_argument('--pilot-pages',type=page_numbers,help='Physical pages for the initial source check, e.g. 10-11')
+    parser.add_argument('--relation-feedback',action='store_true',help='Recheck uncertain or unanswered relationship claims once')
     parser.add_argument('--target-pages',type=page_numbers,help='Physical page numbers or ranges, e.g. 10-19,51')
     parser.add_argument('--mlflow-db',type=Path,help='Optional local MLflow SQLite database for DSPy and pipeline traces')
     parser.add_argument('--compare',action='append',default=[],help='Existing other-document results; manufacturer/system matching is mandatory')
@@ -91,7 +92,8 @@ def main(argv=None):
         cli_budget_usd=args.cli_budget_usd,model=args.model,backend=args.backend or ('claude-code' if args.claude_executable else None),
         command=[args.backend_executable or args.claude_executable] if args.backend_executable or args.claude_executable else None,
         accept_cli_estimates=args.accept_cli_cost_estimates,reuse=args.reuse,replay=args.replay,pilot_pages=args.pilot_pages,
-        compare=args.compare,index_only=args.index_only,profile=args.profile,target_pages=args.target_pages,trace=bool(args.mlflow_db))
+        compare=args.compare,index_only=args.index_only,profile=args.profile,target_pages=args.target_pages,trace=bool(args.mlflow_db),
+        relation_feedback=args.relation_feedback)
     try:
         with redirect_stdout(sys.stderr):result=program(pdf_url=url)
         output=dict(output_directory=result.output_directory,snapshot_directory=result.snapshot_directory,coverage=result.coverage)
