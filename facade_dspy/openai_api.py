@@ -84,7 +84,8 @@ class OpenAIResponses:
                 content.append({'type': 'input_text', 'text': path.name + '\n' + path.read_text(encoding='utf-8')})
         base = dict(model=self.model, input=[dict(role='user', content=content)],
                     reasoning={'effort': 'low'}, text={'format': {'type': 'json_object'}})
-        maximum = {'identity': 1500, 'extraction': 16000, 'relation_check': 8000, 'review': 5000}[task]
+        maximum = {'identity': 1500, 'extraction': 16000, 'relation_check': 8000,
+                   'review': 5000, 'coverage_check': 2000}[task]
         request_hash = objecthash(base)
         heartbeat()
         count = self.request('/input_tokens', {k: base[k] for k in ('model', 'input', 'text')})['input_tokens']
