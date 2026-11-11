@@ -190,6 +190,7 @@ def main():
     parser.add_argument('--pages', type=int, nargs='+', required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--budget-usd', type=float, required=True)
+    parser.add_argument('--reasoning-effort', choices=('low', 'medium'), default='low')
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
     load_dotenv()
@@ -198,7 +199,7 @@ def main():
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=args.resume)
     budget = Budget(out, args.budget_usd, .06)
-    backend = OpenAIResponses(out, budget, 'gpt-6.1-sol')
+    backend = OpenAIResponses(out, budget, 'gpt-6.1-sol', reasoning_effort=args.reasoning_effort)
     pages = []
     for page in args.pages:
         completed = out / f'page-{page}' / 'result.json'

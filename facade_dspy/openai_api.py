@@ -13,8 +13,9 @@ from .tool_protocol import AuthenticationFailure, IncompleteRead, InsufficientCr
 
 
 class OpenAIResponses:
-    def __init__(self, run, budget, model):
+    def __init__(self, run, budget, model, *, reasoning_effort='low'):
         self.run, self.budget, self.model = run, budget, model.removeprefix('openai/')
+        self.reasoning_effort = reasoning_effort
         if self.model != 'gpt-6.1-sol':
             raise ValueError('The direct OpenAI backend budgets gpt-6.1-sol only')
         self.key = os.environ.get('OPENAI_API_KEY', '').strip()
@@ -67,7 +68,8 @@ class OpenAIResponses:
             result = self._execute(task, prompt, schema, folder, heartbeat)
             span.set_outputs(result['output'])
             span.set_attributes({'mlflow.llm.model':self.model, 'mlflow.llm.provider':'openai',
-                                 'reasoning_effort':'low', 'reported_cost_usd':result.get('reported_cost_usd'),
+                                 'reasoning_effort':result.get('reasoning_effort', 'low'),
+                                 'reported_cost_usd':result.get('reported_cost_usd'),
                                  'mlflow.chat.tokenUsage':result.get('usage') or {}})
             return result
 
@@ -83,9 +85,10 @@ class OpenAIResponses:
             else:
                 content.append({'type': 'input_text', 'text': path.name + '\n' + path.read_text(encoding='utf-8')})
         base = dict(model=self.model, input=[dict(role='user', content=content)],
-                    reasoning={'effort': 'low'}, text={'format': {'type': 'json_object'}})
+                    reasoning={'effort': self.reasoning_effort}, text={'format': {'type': 'json_object'}})
         maximum = {'identity': 1500, 'extraction': 16000, 'relation_check': 8000,
-                   'review': 5000, 'coverage_check': 2000}[task]
+                   'review': 12000 if self.reasoning_effort == 'medium' else 5000,
+                   'coverage_check': 2000}[task]
         request_hash = objecthash(base)
         heartbeat()
         count = self.request('/input_tokens', {k: base[k] for k in ('model', 'input', 'text')})['input_tokens']
@@ -120,4 +123,4 @@ class OpenAIResponses:
             raise ToolFailure('OpenAI completed without JSON output')
         return dict(output=json.loads(''.join(outputs)), raw_response=raw.relative_to(self.run).as_posix(),
                     usage=usage, reported_cost_usd=cost, cache_hit=False,
-                    backend='openai', model=self.model, reasoning_effort='low')
+                    backend='openai', model=self.model, reasoning_effort=self.reasoning_effort)
