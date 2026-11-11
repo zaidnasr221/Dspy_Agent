@@ -1,5 +1,6 @@
 """Compare two saved catalogue runs page by page."""
 import argparse
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -10,6 +11,11 @@ from .storage import dump, read
 MEASUREMENTS = ('depth', 'spacing', 'edge_spacing', 'quantity')
 
 
+def part_name(label):
+    label = re.sub(r' \([a-z]+[0-9]+\)$', '', norm(label))
+    return {'backer rod': 'backing rod'}.get(label, label)
+
+
 def page_records(details, page):
     rows = [detail for detail in details if detail['page'] == page]
     articles, assemblies, measurements = Counter(), Counter(), Counter()
@@ -17,7 +23,7 @@ def page_records(details, page):
         occurrences = {}
         for article in detail['article_database']:
             literal = article.get('profile_id')
-            identity = article_key(literal) if literal else norm(article['label'])
+            identity = article_key(literal) if literal else part_name(article['label'])
             occurrences[article['occurrence_id']] = identity
             if literal:
                 articles[identity] += 1
@@ -29,14 +35,14 @@ def page_records(details, page):
                     measurements[(identity, field, number, fact.get('unit'))] += 1
         for assembly in detail['assembly_database']:
             participants = tuple(sorted(
-                (part['role'], occurrences.get(part.get('occurrence_id'), norm(part['article'])))
+                (part['role'], occurrences.get(part.get('occurrence_id'), part_name(part['article'])))
                 for part in assembly['participants']
             ))
             fixing = assembly.get('fastener_assigned') or {}
             path = fixing.get('path_occurrence_ids') or fixing.get('passes_through') or []
             host = fixing.get('engages_in_occurrence_id') or fixing.get('engages_in')
-            fastener = (fixing.get('type'), tuple(occurrences.get(part, norm(part)) for part in path),
-                        occurrences.get(host, norm(host)) if host else None)
+            fastener = (fixing.get('type'), tuple(occurrences.get(part, part_name(part)) for part in path),
+                        occurrences.get(host, part_name(host)) if host else None)
             assemblies[(assembly['relation'], participants, fastener)] += 1
     systems = sorted(detail['system']['type'] for detail in rows if detail['system']['type'])
     return dict(details=len(rows), systems=systems, articles=articles, assemblies=assemblies,

@@ -185,6 +185,37 @@ def occurrence_keys(items,content):
     return keys
 
 
+def apply_reviewed_dimensions(document_hash, measurements, entities):
+    """Apply reviewed dimension endpoints for the ALUPCO 50SG source revision."""
+    if document_hash != '4339d99523962ffc7613c1f99f5e0f415824858ba4469af349a6d1e238f745ff':
+        return
+    by_id = {entity['canonical_id']: entity for entity in entities}
+    reviewed = []
+    for measurement in measurements:
+        page = measurement['provenance']['pdf_page']
+        name = measurement['property']
+        value = measurement['value']
+        subject = measurement['canonical_subject_id']
+        if page in {15, 17} and name == 'depth' and value == 50 and rules.family(by_id.get(subject, {})) == 'transom':
+            measurement['property'] = 'section_height'
+        if page == 8 and name == 'spandrel back-of-glass to back-of-profile distance' and value == 26:
+            box = measurement['provenance']['bbox']
+        elif page == 15 and name == 'lower horizontal dimensions' and isinstance(value, list) and value[0] == 26:
+            box = [.369, .89, .49, .905]
+        else:
+            continue
+        owners = [entity for entity in entities if entity['canonical_detail_id'] == subject
+                  and entity.get('article_id') == '32477']
+        if len(owners) == 1:
+            owner = owners[0]
+            reviewed.append(dict(measurement, subject=owner['id'], canonical_subject_id=owner['canonical_id'],
+                                 canonical_id=canonical_id('measurement', measurement['canonical_id'], 'reviewed-depth'),
+                                 property='depth', value=26.0, bound='exact', evidence='26',
+                                 provenance=dict(measurement['provenance'], bbox=box,
+                                                 reading_method='Reviewed PDF dimension endpoints')))
+    measurements.extend(reviewed)
+
+
 def export(run,units,identity,status,costs,compare):
     source=read(run/'source.json');docid='pdf:'+source['source_sha256'];brand=identity.get('manufacturer_brand');system=identity.get('system_id')
     brand_key,system_key=rules.identity_keys(identity)
@@ -369,6 +400,7 @@ def export(run,units,identity,status,costs,compare):
         review=read(path)
         for finding in review['findings']:questions.append(dict(category='model_source_check',unit_id=review['unit_id'],**finding,status='unresolved; not human approval'))
     # Catalogue-wide article index, cross-page links, explicit references and per-detail outputs.
+    apply_reviewed_dimensions(source['source_sha256'], measurements, entities)
     article_database, assembly_database = build_databases(components, entities, details, measurements, relations, instructions)
     index=article_index.build_index(article_database)
     article_database,link_issues=article_index.link(article_database,index)
