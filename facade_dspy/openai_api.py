@@ -107,14 +107,14 @@ class OpenAIResponses:
             if isinstance(error.reason, gaierror):
                 self.budget.release_unused(attempt, 'DNS failed before connecting to OpenAI')
             raise
+        raw = self.run / 'raw_responses' / (attempt + '.json')
+        dump(raw, response)
         usage = response.get('usage')
         cost = None
         if usage:
             cached = (usage.get('input_tokens_details') or {}).get('cached_tokens', 0)
             cost = ((usage['input_tokens'] - cached) * 2 + cached * .10 + usage['output_tokens'] * 10) / 1_000_000
             self.budget.settle(attempt, dict(total_cost_usd=cost, usage=usage))
-        raw = self.run / 'raw_responses' / (attempt + '.json')
-        dump(raw, response)
         if response.get('status') != 'completed':
             raise IncompleteRead(f'OpenAI {task} incomplete: {response.get("incomplete_details")}')
         outputs = [part['text'] for item in response.get('output', []) if item['type'] == 'message'

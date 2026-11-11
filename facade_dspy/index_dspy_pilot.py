@@ -1,6 +1,7 @@
 """Full-page DSPy pilot with explicit article dependencies and structured observations."""
 import argparse
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Literal
 
@@ -13,6 +14,7 @@ from .openai_api import OpenAIResponses
 from .publication import published_directory
 from .rules import article_key
 from .storage import dump, read
+from .tool_protocol import IncompleteRead
 
 
 class Part(BaseModel):
@@ -94,8 +96,14 @@ class DrawingAdapter(dspy.JSONAdapter):
         schema = field.annotation
         dump(self.folder / 'inputs.json', {k: v.model_dump() if isinstance(v, BaseModel) else v
                                           for k, v in inputs.items()})
-        receipt = self.backend.execute('review', signature.instructions, schema.model_json_schema(),
-                                       self.folder, lambda: None)
+        try:
+            receipt = self.backend.execute('review', signature.instructions, schema.model_json_schema(),
+                                           self.folder, lambda: None)
+        except IncompleteRead as exc:
+            if 'max_output_tokens' not in str(exc):
+                raise
+            receipt = self.backend.execute('extraction', signature.instructions, schema.model_json_schema(),
+                                           self.folder, lambda: None)
         self.receipts.append(receipt['raw_response'])
         return [{name: schema.model_validate(receipt['output'])}]
 
@@ -191,21 +199,37 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--budget-usd', type=float, required=True)
     parser.add_argument('--reasoning-effort', choices=('low', 'medium'), default='low')
+    parser.add_argument('--index', type=Path, help='Article index JSON for the same catalogue')
+    parser.add_argument('--workers', type=int, choices=range(1, 17), default=1)
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
     load_dotenv()
     source = published_directory(args.catalogue)
-    index = read(source / 'data/article_index.json')
+    index = read(args.index or source / 'data/article_index.json')
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=args.resume)
     budget = Budget(out, args.budget_usd, .06)
     backend = OpenAIResponses(out, budget, 'gpt-6.1-sol', reasoning_effort=args.reasoning_effort)
-    pages = []
-    for page in args.pages:
+    def extract(page):
         completed = out / f'page-{page}' / 'result.json'
-        pages.append(read(completed) if args.resume and completed.is_file() else run_page(page, source, out, backend, index))
-        dump(out / 'pilot.json', dict(pages=pages, cost=budget.summary()))
+        return read(completed) if args.resume and completed.is_file() else run_page(page, source, out, backend, index)
+
+    pages, errors = {}, {}
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        jobs = {executor.submit(extract, page): page for page in dict.fromkeys(args.pages)}
+        for future in as_completed(jobs):
+            page = jobs[future]
+            try:
+                pages[page] = future.result()
+            except Exception as exc:
+                errors[page] = f'{type(exc).__name__}: {exc}'
+            dump(out / 'pilot.json', dict(pages=[pages[p] for p in sorted(pages)], errors=errors,
+                                         cost=budget.summary()))
+            print(f"{len(pages) + len(errors)}/{len(jobs)} page attempts finished "
+                  f"({len(pages)} complete, {len(errors)} need attention)", flush=True)
     print(out / 'pilot.json')
+    if errors:
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':
