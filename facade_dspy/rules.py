@@ -4,11 +4,23 @@ Covers literal article IDs, dimensions, article columns in tables, drawing refer
 the controlled relationship vocabulary, and the identity keys used to scope components.
 Model output is never trusted for these decisions; this module applies them afterwards.
 """
+import json
 import re
 from collections import Counter, defaultdict
+from functools import lru_cache
+from pathlib import Path
 
-# Drawing/sheet numbers are not article IDs (legacy catalogue conventions; harmless elsewhere).
-DRAWING_REFERENCE_PATTERNS = (r'K\d{7}', r'geff[fpc]?\d*')
+KNOWLEDGE_DIR = Path(__file__).with_name('knowledge')
+
+
+@lru_cache(maxsize=None)
+def knowledge(name):
+    """Generic domain knowledge kept as data (facade_dspy/knowledge/<name>.json), never as code."""
+    return json.loads((KNOWLEDGE_DIR / f'{name}.json').read_text(encoding='utf-8'))
+
+
+# Drawing/sheet numbers are not article IDs. Conventions live in knowledge/catalogue_conventions.json.
+DRAWING_REFERENCE_PATTERNS = tuple(knowledge('catalogue_conventions')['drawing_reference_patterns'])
 
 ARTICLE_PATTERNS = (
     r'[A-Za-z][A-Za-z0-9_.-]{2,24}',                                    # EM070, ALU-50-123
@@ -49,6 +61,9 @@ NON_COMPONENT_KINDS = frozenset({'drawing_reference', 'unresolved_reference', 'd
 
 # Controlled relationship vocabulary: definition (shown to the model) and accepted synonyms.
 PREDICATES = {
+    'clamped_by': ('SOURCE is held by the visible or specified compressive action of TARGET.', ('clamped',)),
+    'moves_relative_to': ('SOURCE is explicitly allowed to move relative to TARGET in service.', ('movement',)),
+    'other': ('An explicitly shown or specified relationship not covered above. Explain exactly what connects the parts in evidence.', ()),
     'fastened_by': ('SOURCE is held by fastener TARGET (screw, bolt, rivet, anchor).',
                     ('fixed_with', 'screwed_with', 'secured_by', 'fastened_with')),
     'fixed_to': ('SOURCE is mechanically attached to TARGET.',
@@ -218,3 +233,129 @@ def relation_verdicts(relations, verdicts):
     return {ident:'unsupported' if 'unsupported' in values else
             'supported' if values=={'supported'} else 'uncertain'
             for ident,values in decisions.items()}
+
+
+# ---------------------------------------------------------------------------------------------
+# System type (SG / CC / semi-SG) and part families, from knowledge/system_profiles.json.
+
+def _profiles():
+    return knowledge('system_profiles')
+
+
+def family(node):
+    """Generic family of a part: the model's profile_role when given, else a whole-word synonym match
+    on its kind/label. Returns None when nothing identifies it (e.g. a bare 'silicone')."""
+    families = _profiles()['families']
+    role = (node.get('profile_role') or '').strip()
+    if role in families:
+        return role
+    best = None
+    for field in ('kind', 'label'):
+        text = ' ' + re.sub(r'[_\s]+', ' ', norm(node.get(field) or '')) + ' '
+        for name, spec in families.items():
+            for synonym in spec['synonyms']:
+                if f' {synonym} ' in text and (best is None or len(synonym) > best[1]):
+                    best = (name, len(synonym))
+        if best:
+            return best[0]
+    return None
+
+
+def default_article_type(name):
+    spec = _profiles()['families'].get(name or '')
+    return spec['article_type'] if spec else None
+
+
+def is_fastener(node):
+    return family(node) in _profiles()['fastener_families']
+
+
+def retention_system(relation, nodes):
+    """Classify a glazing retention claim from its mechanism and named participants."""
+    ids = {relation['source'], relation['target'], *(p['node_id'] for p in relation.get('participants') or [])}
+    families = {family(nodes[i]) for i in ids if i in nodes}
+    if not families.intersection({'glass', 'infill'}):
+        return None
+    predicate = canonical_predicate(relation['predicate'])
+    if predicate == 'clamped_by' and 'pressure_plate' in families:
+        return 'CC'
+    if ((predicate == 'bonded_to' and 'structural_silicone' in families)
+            or (predicate == 'clamped_by' and 'toggle' in families)):
+        return 'SG'
+    return None
+
+
+def detail_system(nodes, relations=()):
+    """Classify glazing from eligible, evidence-backed retention claims in this detail."""
+    by_id = {n['id']: n for n in nodes if 'id' in n}
+    matches = [(retention_system(r, by_id), r) for r in relations
+               if r.get('graph_eligible') and (r.get('evidence') or '').strip()]
+    matches = [(kind, r) for kind, r in matches if kind]
+    kinds = {kind for kind, _ in matches}
+    kind = _profiles()['semi_type'] if len(kinds) > 1 else next(iter(kinds), None)
+    status = 'unresolved' if not matches else (
+        'explicit' if {k for k, r in matches if r['basis'] == 'explicit_text'} == kinds else 'visual')
+    return dict(type=kind, evidence=[f"{k}: {r['evidence']}" for k, r in matches], evidence_status=status)
+
+
+def system_issues(declared, nodes, relations=()):
+    """Compare the model's system_type with the type computed from the detail's parts (review only)."""
+    computed = detail_system(nodes, relations)
+    issues = []
+    if declared and computed['type'] and declared != computed['type']:
+        issues.append(dict(issue='system_type_mismatch', declared=declared, computed=computed['type'],
+                           evidence=computed['evidence']))
+    if declared and not computed['type']:
+        issues.append(dict(issue='system_type_without_retention_evidence', declared=declared))
+    return computed, issues
+
+
+def system_part_of(nodes):
+    """Which system part a set of participants belongs to, from system-only families; None if mixed/unknown."""
+    only = _profiles()['system_only_families']
+    parts = {name for node in nodes for name, families in only.items() if family(node) in families}
+    return next(iter(parts)) if len(parts) == 1 else None
+
+
+def assembly_issues(relation, nodes):
+    """Structural checks on one fixing/assembly relation; returns issue names (review, never deletion)."""
+    issues = []
+    path = [*(relation.get('passes_through') or []), *([relation['engages_in']] if relation.get('engages_in') else [])]
+    fastener = relation.get('fastener_id')
+    if relation.get('relation_type') == 'fixed':
+        endpoints = [nodes.get(relation.get('source')), nodes.get(relation.get('target'))]
+        if not fastener and not any(n and is_fastener(n) for n in endpoints):
+            issues.append('fixed_without_fastener')
+    if fastener and fastener in nodes and not is_fastener(nodes[fastener]):
+        issues.append('fastener_id_not_a_fastener')
+    if fastener and fastener in path:
+        issues.append('fastener_in_its_own_path')
+    if len(path) != len(set(path)):
+        issues.append('repeated_part_in_fastener_path')
+    part = relation.get('system_part')
+    members = [nodes[i] for i in (relation.get('source'), relation.get('target'), *path) if i in nodes]
+    implied = system_part_of(members)
+    if part and implied and part != implied:
+        issues.append('system_part_mismatch')
+    return issues
+
+
+def axis_of(nodes):
+    """'vertical' / 'horizontal' when the parts touch frame members of exactly one axis, else None."""
+    axes = {axis for node in nodes for axis, families in _profiles()['axes'].items()
+            if not axis.startswith('_') and family(node) in families}
+    return next(iter(axes)) if len(axes) == 1 else None
+
+
+def semi_axes(parts_by_axis):
+    """Per-axis system of a semi-SG detail from {axis: {system parts seen on that axis}}.
+    Returns (per_axis, issues): an axis carrying both CC and SG parts is flagged, never resolved."""
+    per_axis, issues = {}, []
+    for axis, parts in parts_by_axis.items():
+        if len(parts) == 1:
+            per_axis[axis] = next(iter(parts))
+        elif len(parts) > 1:
+            issues.append(f'semi_sg_both_systems_on_{axis}_axis')
+    if len(per_axis) == 2 and len(set(per_axis.values())) == 1:
+        issues.append('semi_sg_same_system_on_both_axes')
+    return per_axis, issues

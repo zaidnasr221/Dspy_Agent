@@ -16,7 +16,8 @@ def digest(path):
 # Inputs of the retired manufacturer-profile layer. Checkpoints that listed them stay valid without them.
 RETIRED_INPUTS=frozenset({'code:manufacturers.py','run:manufacturer_profile.json'})
 # Inputs added to region extraction after checkpoints already existed.
-ADDED_EXTRACTION_INPUTS=frozenset({'code:rules.py'})
+ADDED_EXTRACTION_INPUTS=frozenset({'code:rules.py','code:knowledge/system_profiles.json',
+                                   'code:knowledge/catalogue_conventions.json'})
 
 
 def compatible_spec(old,new):

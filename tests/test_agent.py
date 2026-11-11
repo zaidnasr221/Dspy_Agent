@@ -97,8 +97,8 @@ def test_url_to_dspy_tool_checks_and_formats(tmp_path):
         # Drawing pages are read whole: one region per page, each with a relationship check.
         assert calls.count('extraction')==2 and calls.count('review')==2 and calls.count('relation_check')==2
         assert '?' not in read(run/'source.json')['source_url']
-        for ext in ['json','parquet','csv']:assert (run/'data'/f'components.{ext}').exists()
-        assert pl.read_parquet(run/'data/components.parquet').height==2
+        assert (run/'data/components.json').exists() and not (run/'data/components.parquet').exists()
+        assert len(read(run/'data/components.json'))==2
         assert '<html lang="en">' in (run/'review.html').read_text(encoding='utf-8')
         before=len(calls);again=agent(pdf_url=url);assert len(calls)==before
         assert read(run/'coverage.json')['complete_proposal_pages']==[1,2]

@@ -4,8 +4,12 @@ from pathlib import Path
 import html
 import json
 import re
-import polars as pl
+
 import pymupdf
+from .catalogue_databases import build_databases
+from . import articles as article_index
+from . import assembly as detail_assembly
+from . import references as cross_references
 from .storage import read,dump,objecthash
 from .schema import validate
 from .publication import published_directory
@@ -24,10 +28,8 @@ def table(rows,columns):
 
 
 def dataset(run,name,rows):
+    """JSON only: CSV/Parquet copies of every dataset were never read by the pipeline or the review."""
     dump(run/'data'/f'{name}.json',rows)
-    flat=[{k:json.dumps(v,ensure_ascii=False) if isinstance(v,(list,dict)) else v for k,v in r.items()} for r in rows]
-    frame=pl.DataFrame(flat,infer_schema_length=None) if flat else pl.DataFrame(schema={'record_id':pl.String})
-    frame.write_parquet(run/'data'/f'{name}.parquet');frame.write_csv(run/'data'/f'{name}.csv',null_value='null')
 
 
 def literal_article(value,kind,profile=None):
@@ -48,7 +50,7 @@ def _no_locator(box):
     return not box or box==WHOLE_PAGE or box[0]==box[2] or box[1]==box[3]
 
 
-def relationship_status(relation,source,target,disputed,profile=None,scope=None,verification='not_checked'):
+def relationship_status(relation,source,target,disputed,profile=None,scope=None,verification='not_checked',nodes=None):
     """Strict graph eligibility. Every relationship stays a proposal; only 'proposed' ones are graph-eligible.
 
     invalid    – self reference, a non-component endpoint, or rejected by relationship verification
@@ -69,6 +71,31 @@ def relationship_status(relation,source,target,disputed,profile=None,scope=None,
     if predicate is None:unresolved.append('unrecognized_predicate')
     if relation['basis'] not in rules.OBSERVED_BASES:unresolved.append('inferred_not_observed')
     if not (relation.get('evidence') or '').strip():unresolved.append('no_relationship_evidence')
+    if relation.get('relation_type')=='other' and not (relation.get('relation_clarification') or '').strip():
+        unresolved.append('other_relation_without_clarification')
+    if relation.get('fastener_id') and relation.get('fastener_id') in (relation['source'],relation['target']) and predicate!='fastened_by':
+        invalid.append('fastener_is_an_endpoint_of_its_own_fixing')
+    if (relation.get('fixing_evidence') in {'alignment','fixing_location'} or
+            (predicate=='fixed_to' and relation['basis']=='drawing_reading' and relation.get('fastener_id')
+             and not relation.get('engages_in'))):
+        unresolved.append('fixing_engagement_not_established')
+    participants=[p['node_id'] for p in relation.get('participants') or []]
+    if participants and (len(participants)!=len(set(participants)) or
+            not {relation['source'],relation['target']}.issubset(participants)):
+        unresolved.append('invalid_assembly_participant_set')
+    if nodes is not None:
+        path=[*participants,*(relation.get('passes_through') or [])]
+        path.extend(relation[field] for field in ('fastener_id','engages_in') if relation.get(field))
+        if any(ref not in nodes or nodes[ref].get('detail_id')!=source.get('detail_id') for ref in path):
+            unresolved.append('assembly_reference_outside_detail')
+        for issue in rules.assembly_issues(relation,nodes):
+            if issue in {'fastener_id_not_a_fastener','fastener_in_its_own_path','repeated_part_in_fastener_path'}:
+                unresolved.append(issue)
+        for offset in relation.get('distance_offsets') or []:
+            if (not all((offset.get(field) or '').strip() for field in ('from_datum','to_datum','evidence'))
+                    or _no_locator(offset.get('bbox')) or (scope and not _inside(offset['bbox'],scope,rules.SCOPE_TOLERANCE))):
+                unresolved.append('fixing_offset_evidence_unresolved')
+                break
     if scope is not None:
         box=relation.get('bbox')
         if _no_locator(box):unresolved.append('no_evidence_locator')
@@ -126,7 +153,8 @@ def finding_claims(finding,relations,nodes):
 
 
 def disputed_claims(findings,relations,nodes):
-    return set().union(*(finding_claims(f,relations,nodes) for f in findings if f['severity']=='error'))
+    return set().union(*(finding_claims(f,relations,nodes) for f in findings
+                         if f['severity']=='error' or (f['severity']=='question' and _tagged_claim(f))))
 
 
 def unresolved_errors(findings,relations,nodes,decisions):
@@ -137,7 +165,10 @@ def unresolved_errors(findings,relations,nodes,decisions):
 
 def _relationship_evidence_key(relation):
     return (relation['source'],rules.canonical_predicate(relation['predicate']),relation['target'],
-            relation['basis'],relation['condition'],tuple(relation['bbox']),(relation.get('evidence') or '').strip())
+            relation['basis'],relation['condition'],tuple(relation['bbox']),(relation.get('evidence') or '').strip(),
+            objecthash(dict(participants=sorted((p['node_id'],p['role']) for p in relation.get('participants') or []),
+                            fastener=relation.get('fastener_id'), path=relation.get('passes_through') or [],
+                            engagement=relation.get('engages_in'), offsets=relation.get('distance_offsets') or [])))
 
 
 def canonical_id(kind, *scope):
@@ -168,7 +199,7 @@ def export(run,units,identity,status,costs,compare):
     review_errors={}
     for path in (run/'reviews').glob('*.json'):
         review=read(path)
-        review_errors.setdefault(review['unit_id'],[]).extend(f for f in review['findings'] if f['severity']=='error')
+        review_errors.setdefault(review['unit_id'],[]).extend(review['findings'])
     registry=defaultdict(list);entities=[];details=[];relations=[];measurements=[];tables=[];rows=[];instructions=[];questions=[];transcription=[];crops=[];records={};crop_plans=[]
     for path in sorted((run/'proposals').glob('*.json')):
         record=read(path);unit=record['unit'];uid=unit['unit_id'];n=unit['pdf_page']
@@ -190,7 +221,7 @@ def export(run,units,identity,status,costs,compare):
         # native PDF text or table cells). Without any such text the check is unavailable, not failed.
         evidence_texts=[s['text'] for s in record.get('source_text',[])]+[index.get('native_text') or '']
         evidence_texts.extend(ref for t in value['tables'] for row in t['rows']
-            for header,cell in zip(t['columns'],row['cells']) if cell and rules.article_column(header)
+            for header,cell in zip(t['columns'],row['cells']) if cell and article_index.article_column(header,t['columns'])
             for ref in rules.table_articles(cell)[0])
         can_ground=any(x.strip() for x in evidence_texts)
         node_status={}
@@ -223,11 +254,14 @@ def export(run,units,identity,status,costs,compare):
             claim_id=rules.claim_id(i)
             verdict=decisions.get(claim_id,'missing')
             rel_status,reasons=relationship_status(r,node_map[r['source']],node_map[r['target']],claim_id in disputed,
-                                                   scope=unit['bbox'],verification=verdict)
-            for side in ('source','target'):
+                                                   scope=unit['bbox'],verification=verdict,nodes=node_map)
+            endpoint_refs={side:r[side] for side in ('source','target')}
+            endpoint_refs.update({f'participant_{p["node_id"]}':p['node_id'] for p in r.get('participants') or []})
+            endpoint_refs.update({f'fixing_{ref}':ref for ref in [r.get('fastener_id'),r.get('engages_in'),*(r.get('passes_through') or [])] if ref})
+            for side,ref in endpoint_refs.items():
                 # An endpoint whose article ID is not printed on the page may be a hallucinated part.
-                if r[side] in node_status:
-                    reasons.append(side+'_'+node_status[r[side]])
+                if ref in node_status:
+                    reasons.append(side+'_'+node_status[ref])
                     if rel_status in ('proposed','disputed'):rel_status='unresolved'
             if (record['metadata'].get('legacy_review_unavailable') or
                     record['metadata'].get('method')=='reuse_exact_source_hash; no model call'):
@@ -248,6 +282,7 @@ def export(run,units,identity,status,costs,compare):
                 claim_id=claim_id,canonical_predicate=predicate,verification=verdict,
                 relationship_status=rel_status,status_reasons=reasons,graph_eligible=rel_status=='proposed',human_confirmed=False,
                 canonical_id=key('relationship',*local),canonical_source_id=entity_keys[r['source']],canonical_target_id=entity_keys[r['target']],
+                canonical_fastener_id=entity_keys.get(r.get('fastener_id')),
                 source_article_id=node_map[r['source']]['article_id'],target_article_id=node_map[r['target']]['article_id'],provenance=provenance(r['bbox'])))
         measurement_keys=occurrence_keys(value['measurements'],lambda m:[m['subject'],m['property'],m['value'],m['unit'],m['datum'],m['condition']])
         for m,local in zip(value['measurements'],measurement_keys):
@@ -256,6 +291,10 @@ def export(run,units,identity,status,costs,compare):
             # Match the legacy full-page merge's node-first resolution of shared local IDs.
             subject = m['subject']
             subject_id = entity_keys[subject] if subject in entity_keys else detail_keys[subject]
+            denominator=node_map.get(m.get('per_node_id'))
+            if denominator is not None and subject in node_map and denominator['detail_id']==node_map[subject]['detail_id']:
+                item.update(per_article=denominator['article_id'] or denominator['label'],
+                            per_occurrence_id=entity_keys[denominator['id']])
             measurements.append(dict(**item,canonical_id=key('measurement',*local),canonical_subject_id=subject_id,provenance=provenance(m['bbox'])))
         for t in value['tables']:
             table_key = key('table',t['id'])
@@ -266,10 +305,11 @@ def export(run,units,identity,status,costs,compare):
                     canonical_id=key('table_row',t['id'],i),canonical_table_id=table_key,original_table_id=t['id'],
                     cells=row['cells'],footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
                 for col,cell in zip(t['columns'],row['cells']):
-                    if cell and rules.article_column(col):
+                    if cell and article_index.article_column(col,t['columns']):
                         found,drawing_refs,leftover=rules.table_articles(cell)
                         for ref in found:registry[rules.article_key(ref)].append(dict(kind='table_reference',label=' | '.join(c or 'Unknown' for c in row['cells']),material=None,
-                                literal_article_id=ref,headers=t['columns'],units=t['units'],footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
+                                literal_article_id=ref,headers=t['columns'],units=t['units'],cells=row['cells'],
+                                footnotes=t['footnotes'],provenance=provenance(row['bbox'])))
                         for ref in drawing_refs:questions.append(dict(category='drawing_reference_in_article_column',message=f'{col}: {ref}',provenance=provenance(row['bbox'])))
                         if leftover:questions.append(dict(category='unparsed_table_article_cell',message=f'{col}: {leftover}',provenance=provenance(row['bbox'])))
         instruction_keys=occurrence_keys(value['instructions'],lambda x:[x['detail_id'],x['sequence'],x['text'],x['condition']])
@@ -328,14 +368,32 @@ def export(run,units,identity,status,costs,compare):
     for path in (run/'reviews').glob('*.json'):
         review=read(path)
         for finding in review['findings']:questions.append(dict(category='model_source_check',unit_id=review['unit_id'],**finding,status='unresolved; not human approval'))
+    # Catalogue-wide article index, cross-page links, explicit references and per-detail outputs.
+    article_database, assembly_database = build_databases(components, entities, details, measurements, relations, instructions)
+    index=article_index.build_index(article_database)
+    article_database,link_issues=article_index.link(article_database,index)
+    reference_links=cross_references.find(details,instructions,questions,transcription,relations,measurements,read(run/'reference_index.json'))
+    outputs,output_issues=detail_assembly.detail_outputs(identity.get('document_name') or source.get('file_name') or docid,
+        details,entities,article_database,assembly_database,index,reference_links,transcription)
+    questions.extend(dict(category=i['category'],message=json.dumps({k:v for k,v in i.items() if k not in ('category','provenance')},ensure_ascii=False),
+                          provenance=i.get('provenance') or dict(pdf_page=(i.get('pages') or [None])[0])) for i in link_issues+output_issues)
+    questions.extend(dict(category='unresolved_reference',message=r['quote'],provenance=r['provenance']) for r in reference_links if r['status']=='unresolved')
+    # Material conflicts are review questions, not a separate file.
+    questions.extend(dict(category='material_conflict',message=f"{c['article_id']}: {', '.join(c['claims'])}",
+                          provenance=c['evidence'][0]['provenance']) for c in conflicts)
+    # Only what the output and its review need. Entity sub-lists (drawing instances, tools ...), the
+    # transcription, crop list and page index are already inside entities/proposals/the run folder.
     collections=dict(components=components,entities=entities,details=details,relationships=relations,
         graph_relationships=[r for r in relations if r['graph_eligible']],measurements=measurements,
-        tables=tables,table_rows=rows,instructions=instructions,questions=questions,conflicts=conflicts,cross_document_links=cross,cross_document_comparison=comparisons,
-        source_text=transcription,source_crops=crops,reference_index=read(run/'reference_index.json'))
-    for name,predicate in [('drawing_instances',lambda e:e['entity_class']=='drawing_instance'),('connections',lambda e:e['entity_class']=='connection'),
-                           ('machining_features',lambda e:e['entity_class']=='machining_feature'),('tools',lambda e:e['component_category']=='tool'),
-                           ('consumables',lambda e:e['component_category']=='consumable')]:collections[name]=[e for e in entities if predicate(e)]
+        tables=tables,table_rows=rows,instructions=instructions,questions=questions)
+    if compare:collections.update(cross_document_links=cross,cross_document_comparison=comparisons)
     for name,data in collections.items():dataset(run,name,data)
+    dump(run/'data/article_database.json', article_database)
+    dump(run/'data/article_index.json', index)
+    dump(run/'data/reference_links.json', reference_links)
+    dump(run/'data/detail_outputs.json', outputs)
+    for output in outputs:dump(run/'data/details'/detail_assembly.file_name(output),output)
+    dump(run/'data/assembly_database.json', assembly_database)
     parents={u['parent'] for u in units if u['parent']};leaves=[u for u in units if u['unit_id'] not in parents]
     complete=[n for n in range(1,source['page_count']+1) if all(u['unit_id'] in records for u in leaves if u['pdf_page']==n) and any(u['pdf_page']==n for u in leaves)]
     metadata_pages={n for n in complete if all(records[u['unit_id']]['extraction']['page_kind']=='metadata_index_only'
@@ -345,6 +403,11 @@ def export(run,units,identity,status,costs,compare):
         completed_region_proposals=len(records),total_leaf_regions=len(leaves),human_engineering_approved_records=0,
         limitations=['Native text and region detection are retrieval aids.','Source boxes are approximate, not CAD geometry.',
                     'Model source checks are not human approval.','Material-string differences do not exhaust compatibility/geometry conflicts.'])
+    if (run/'catalogue_scope.json').is_file():
+        scope=read(run/'catalogue_scope.json')
+        coverage['target_pages']=scope['target_pages']
+        coverage['remaining_target_pages']=sorted(set(scope['target_pages'])-set(complete))
+        coverage['support_pages']=scope['support']
     dump(run/'coverage.json',coverage);dump(run/'cost_summary.json',costs)
     dump(run/'document.json',dict(**source,**identity,
         document_id=docid,sha256=source['source_sha256'],review_status='proposed',replay_manifest_version=1))
@@ -361,8 +424,20 @@ def export(run,units,identity,status,costs,compare):
             dmap={d['id']:prefix+d['id'] for d in value['details']};nmap={e['id']:prefix+e['id'] for e in value['nodes']}
             for d in value['details']:d['id']=dmap[d['id']]
             for e in value['nodes']:e['id']=nmap[e['id']];e['detail_id']=dmap[e['detail_id']]
-            for r in value['relations']:r['source']=nmap[r['source']];r['target']=nmap[r['target']]
-            for m in value['measurements']:m['subject']=nmap.get(m['subject'],dmap.get(m['subject']))
+            for r in value['relations']:
+                r['source'], r['target'] = nmap[r['source']], nmap[r['target']]
+                if r.get('fastener_id') is not None:
+                    r['fastener_id'] = nmap.get(r['fastener_id'])
+                if r.get('engages_in') is not None:
+                    r['engages_in'] = nmap.get(r['engages_in'])
+                if r.get('passes_through'):
+                    r['passes_through'] = [nmap[x] for x in r['passes_through'] if x in nmap]
+                for participant in r.get('participants') or []:
+                    participant['node_id']=nmap[participant['node_id']]
+            for m in value['measurements']:
+                m['subject']=nmap.get(m['subject'],dmap.get(m['subject']))
+                if m.get('per_node_id'):
+                    m['per_node_id']=nmap[m['per_node_id']]
             for t in value['tables']:t['id']=prefix+t['id']
             for instruction in value['instructions']:instruction['detail_id']=dmap[instruction['detail_id']]
             for key in ['details','nodes','relations','measurements','tables','instructions','unresolved']:merged[key].extend(value[key])
@@ -372,8 +447,9 @@ def export(run,units,identity,status,costs,compare):
         dump(run/'full/pages'/f'p{n:04}.json',merged)
     dump(run/'full/summary.json',dict(document_id=docid,processed_content_pages=len(set(complete)-metadata_pages),
         metadata_only_pages=sorted(metadata_pages),review_status='proposed_not_engineer_verified'))
-    links='<p><a href="source.pdf">Original PDF</a> · <a href="coverage.json">Coverage</a> · <a href="cost_summary.json">Costs</a> · <a href="data/components.json">JSON</a> · <a href="data/components.parquet">Parquet</a> · <a href="data/components.csv">CSV</a></p>'
+    links='<p><a href="source.pdf">Original PDF</a> · <a href="coverage.json">Coverage</a> · <a href="cost_summary.json">Costs</a> · <a href="data/components.json">Components (JSON)</a></p>'
     body='<p class="notice">Proposed knowledge. No human engineering approvals. '+html.escape(status)+'</p>'+links
+    body+='<p><a href="data/article_database.json">Article Database (JSON)</a> · <a href="data/assembly_database.json">Assembly Database (JSON)</a> · <a href="data/detail_outputs.json">Per-detail outputs (JSON)</a> · <a href="data/article_index.json">Article index</a> · <a href="data/reference_links.json">Cross-references</a></p>'
     body+=f'<p>{len(complete)}/{source["page_count"]} pages have complete proposal coverage. {len(components)} article records; {len(relations)} relationships; {len(rows)} table rows.</p>'
     body+='<input id="search" aria-label="Search records" placeholder="Search article, description or source">'
     body+=table([dict(article_id=c['article_id'],description='; '.join(o['label'] for o in c['observations']),source_pages=sorted({o['provenance']['pdf_page'] for o in c['observations']})) for c in components],['article_id','description','source_pages'])

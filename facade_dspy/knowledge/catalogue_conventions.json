@@ -1,0 +1,4 @@
+{
+  "_doc": "Catalogue conventions that are data, not code. Drawing/sheet-number patterns are never article IDs. Add a manufacturer's convention here instead of in Python.",
+  "drawing_reference_patterns": ["K\\d{7}", "geff[fpc]?\\d*"]
+}

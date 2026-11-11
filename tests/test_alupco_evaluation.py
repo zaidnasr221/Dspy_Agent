@@ -5,10 +5,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from facade_dspy.benchmark import evaluate
 from facade_dspy.storage import read
 
 TRUTH = Path(__file__).resolve().parents[1] / 'evaluation' / 'alupco_50sg_ground_truth.json'
+pytestmark = pytest.mark.skipif(not TRUTH.is_file(), reason='Optional reviewed ALUPCO labels are absent')
 
 
 def predictions(truth=None):

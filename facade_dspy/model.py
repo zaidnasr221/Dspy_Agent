@@ -4,8 +4,8 @@ import os
 import re
 
 DEFAULT_BACKEND='opencode'
-DEFAULT_MODELS={'claude-code':'claude-sonnet-5-5','opencode':'openai/gpt-6.1-sol'}
-API_KEY_ENV={'claude-code':'ANTHROPIC_API_KEY','opencode':'OPENAI_API_KEY'}
+DEFAULT_MODELS={'claude-code':'claude-sonnet-5-5','opencode':'openai/gpt-6.1-sol','openai':'gpt-6.1-sol'}
+API_KEY_ENV={'claude-code':'ANTHROPIC_API_KEY','opencode':'OPENAI_API_KEY','openai':'OPENAI_API_KEY'}
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,9 @@ def resolve_model(backend=None,model=None):
 def make_backend_factory(config,command=None,cli_budget=.15,accept_estimates=False):
     """Keep the existing (run, budget) factory injection contract."""
     def factory(run,budget):
+        if config.backend=='openai':
+            from .openai_api import OpenAIResponses
+            return OpenAIResponses(run,budget,config.model)
         if config.backend=='claude-code':
             from .claude_tool import ClaudeCode
             return ClaudeCode(run,budget,command,config.model,cli_budget,accept_estimates=accept_estimates)

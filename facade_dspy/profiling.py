@@ -11,8 +11,9 @@ import uuid
 
 
 class PipelineProfiler:
-    def __init__(self,out,enabled=False,mode='full'):
+    def __init__(self,out,enabled=False,mode='full',trace=False):
         self.out=Path(out);self.enabled=enabled;self.mode=mode;self.report_path=None;self.active=False
+        self.trace=trace
         if enabled:
             try:
                 from pyinstrument import Profiler
@@ -35,6 +36,20 @@ class PipelineProfiler:
             print('[profiling] could not start; continuing without profiling',flush=True);traceback.print_exc()
 
     def call(self,stage,function,*args,**kwargs):
+        if self.trace:
+            import mlflow
+            with mlflow.start_span(name=stage) as span:
+                result=self._call(stage,function,*args,**kwargs)
+                if stage=='catalogue_support':
+                    span.set_outputs(result)
+                if isinstance(result,dict) and 'tool_receipt' in result.get('metadata',{}):
+                    receipt=result['metadata']['tool_receipt']
+                    span.set_attributes({key:receipt[key] for key in ('backend','model','reasoning_effort','reported_cost_usd','cache_hit')
+                                         if receipt.get(key) is not None})
+                return result
+        return self._call(stage,function,*args,**kwargs)
+
+    def _call(self,stage,function,*args,**kwargs):
         if not self.active:return function(*args,**kwargs)
         profiler=self.profiler_class(async_mode='disabled')
         try:

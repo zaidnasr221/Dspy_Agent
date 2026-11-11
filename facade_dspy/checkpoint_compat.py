@@ -6,6 +6,10 @@ change never silently re-runs paid extraction for an existing workspace.
 """
 
 
+from hashlib import sha256
+from pathlib import Path
+
+
 CHECKPOINT_UPGRADES = {
     'code:budget.py': (
         (
@@ -49,10 +53,14 @@ CHECKPOINT_UPGRADES = {
         (
             '4e58a9ee766568c44d7919377441d1f2dac7a09654b0cd1b9d1deb37900ffad8',
             'ef83d7d25ef58331747cc1933768d763be6170d22b81da5fda436f0bc405915f',
-        ),
-        (
             '1d7e51a97622fdc529e346f50e361df9baba98b061aced4fe815e9a4d2e1a271',
             'b9bc04b53078123ca05923ddf4a02d6db91a6f7acf57780aa54d8a2ad40da501',
+            '0b08ab65cd13854199a4b417b71325153908b052ab0516128adead1304c3ad73',
+            '80a0235ac4ac5f3c28d8bc75020be434989d4560d12564738ea8d954dab8d58a',
+        ),
+        (
+            'c0fc401bedc4185b3dc8fbff8f94dace6151718718826cdd047c3a6b700d9698',
+            'd01fa79327dc56dd9854842a5d83c31917839f4bbbde2cae63149fed0bac0500',
         ),
     ),
     'code:opencode_tool.py': (
@@ -89,10 +97,18 @@ CHECKPOINT_UPGRADES = {
             'df54d0ab856f7dff5ffdce3005f455c81c5e25af4b96d7478214e820bb74c754',
             'e33fa6fcd99cf282eefb1b256fe7bc0bbad443c4d2ecf8f0201cbb80dbae34c9',
             'fd36bb2e3cb4230e41f1aabf928225829bca1e6f8b0f80133b61ce91ff803459',
-        ),
-        (
             '46deb204b875871b43da4e88f0d4f51ac14365f61d5b1daba9cde4e060521445',
             'f9da5a3315055c0d23ffd86925d88eb09950d5b4319c5b14bd141e2751b4a1a0',
+            '531e702feff08cb76825eb738856311b4e5e759214e13be727a21da489d36c0c',
+            'a53eafcaa95ee29be0d322e82df5d1cac37057d89d44a07a523b3bdbdff973d8',
+            '14dc3efcf0d43aa5e36b85c793ac3c9cfb1f38c5e95341fde56b6ec11b5aa548',
+            'f991030c874ffe5bac7c4e587503b23263f5b9079d548edd6efecfc76fc0ae4a',
+            '8373493c5eb849d84bb4710df1f34ae8603a87ad5b65e9ec49245ada0b12a8b1',
+            'befc279a15136cdba66edc1a68f47ef09e8050242938046dc01eaa102b96a3eb',
+        ),
+        (
+            '2b87d88f84cf4a4dd3beee592f9df7403092978d6d903d1982cbcb948eb81edc',
+            'a357b55714ae755b430164677e05b11cef8baa58b79e27ac5a9ae6b167ffc4cd',
         ),
     ),
     'code:queue.py': (
@@ -103,20 +119,28 @@ CHECKPOINT_UPGRADES = {
             '99f8eeee2c4dad42c0675e814d749fcdd6c18921fddd0bd59d8f0e749620f7bb',
             'c881db8bb0e8af9d20b04840a4578aa46f9fa0b0e8640320aefa3c4afb637cbb',
             'fc0c438384b67fa6d88f1dfdfe3462ecd80680f4e000bcb5a03d6c55dfcc509d',
-        ),
-        (
             'd27545172168d1c6b9abbb95422255e2f7c89a67cb1c4a2d628dc718110e4098',
             'fcd8b05b64e35cc12ca52538e7d16d7e989b57d3cdd05206214c9112fb6db023',
+        ),
+        (
+            'a9c508ca9c2b2d25892594dbb037c7f96b9674018b76e0fe76b027fe58d7d458',
+            'e4e29c755055d01c80325484fabfb83f8faf5e4cbb6c48e7ad27c457a3fd29a7',
         ),
     ),
     'code:rules.py': (
         (
             '08885f2b1563d6d09de29beef0324dc749880a422dca10a04ed3b706b113aac9',
             '3d923b6eb9b9e021cc1d97fd498b1a83d4fb74d157966f24c059d87de1601a91',
-        ),
-        (
             'e993ee048d8de76fd0c596805e84cf94d2741e5288799cbf7a0ca85ddd588ce3',
             'bc9857ef9d3a7b2bc6b979909924c1e7aa94f7794cec591e305952e23cc400b2',
+            '82f2250dfd1d86df1c2ac048154d34c61242fa11ce03792afad1661d87c236c6',
+            'fa8a11bddd02fe187b6bab871c9caa75aadd3cd7856fd1ccd86e38097b3b2015',
+            '18ecd834afd3331beeee6aaca91d468c6aab88283bc7cad1a863ab10e57708b1',
+            '19d0a9b2e8f9714d88bfb2aecb1c856729c388e176d3e1441fe0af3676fe9db1',
+        ),
+        (
+            'fbe6124a12814b91c50d63b7722f4ee800fe55885eb9d06b744787637787d96f',
+            '1a71353dd571517675d8d11456e1ee05c322b30edfa2544135e4768db3cb539a',
         ),
     ),
     'code:schema.py': (
@@ -127,10 +151,20 @@ CHECKPOINT_UPGRADES = {
             '9367b24e321ef5f4fe24a7ceaf9e7a68220567fa41075cc390227dae4744907f',
             'c5c64f2e2f7e701de716c74eca09e5223735a9a94009413a7670f0b8f89bca67',
             'e4b5431703e606b927a283d22cae7a36271936fad38cc6fdaab7cef0470a8138',
-        ),
-        (
             'f0a04e3d3bd1b4b958a23bcc131b0a3fdbd8fbac7257bde6b273f3cc0518b507',
             '4e2fb5eabc52d8476de8912e8974dfe98be8f983cee0018b1ec31f2486102877',
+            'fd5d60d78e15f42dc7e362983dee6fd164ee5520b01d7cd3343b939ef1d23268',
+            '29e152f1e0a9b1db03242126369e93ac627fdc5d001d2a5ec220f8a525f65fb2',
+            '537d9c2411d3b4137bca554390464afc46dc3e29fec66f56d050deaaad24769d',
+            '333c4e81fdb41682fe2b1ba3328dc4836b36da6a861c7c0ded3681a3f06628c3',
+            'db823d28756b9d83cf5481b7435794fb76a1771a44a81513a73f1ef2e7aeb56a',
+            '8e2ca0a0c4c162cd97ecc055228629cdc296c394f69d9e1603446f4178251a11',
+            'e274eef478b2d9590e93231a98897558345a0174c676b7bbdb2f1014fb821a7e',
+            '50e6791ac2876c7b9b927b7c7510b07bad461ce5c12f8e81416e6b47f94676bf',
+        ),
+        (
+            '95d566e88bae5e9a76d86dabf82902f9926d048370f8b871c47467331b04c44e',
+            '2af9c150dd4d4e19f690a20e2cefa26b0ddfdff8789b4b0f9fafec23b9361214',
         ),
     ),
     'code:source.py': (
@@ -158,12 +192,30 @@ CHECKPOINT_UPGRADES = {
             '492a5d78ccf0ea4253084e7ca021597bc60b21609ec26236c2c26d75496acd3b',
         ),
     ),
+    'code:knowledge/system_profiles.json': (
+        (
+            '8decc6ddb9115ac2f4d40626d2635229a3f7fc651a7f0645fded13acad18dd53',
+            '20645fd1b70266bdbdefdf0bc042f0807e8957778f7974b2de7ccde0687f4d89',
+        ),
+        (
+            'e14b7f28d083f7b4e9e8268a062a0ba89a51113e2b5f50ae74825f4c0fcdf505',
+            '8a5f19e595671c5a4c60dac11953e543ca53ba7aa6609215dfdb29cce5e26f7f',
+        ),
+    ),
 }
 
 
 def compatible_code(ref, previous, current):
     if previous == current:
         return True
+    if ref.startswith('code:'):
+        root = Path(__file__).resolve().parent
+        local = (root / ref[5:]).resolve()
+        if local.is_relative_to(root) and local.is_file():
+            normalized = local.read_bytes().replace(b'\r\n', b'\n')
+            hashes = {sha256(value).hexdigest() for value in (normalized, normalized.replace(b'\n', b'\r\n'))}
+            if previous in hashes and current in hashes:
+                return True
     upgrade = CHECKPOINT_UPGRADES.get(ref)
     return upgrade is not None and current in upgrade[1] and (
         previous in upgrade[0] or previous in upgrade[1])

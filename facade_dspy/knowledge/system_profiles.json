@@ -1,0 +1,312 @@
+{
+  "_doc": "Generic curtain-wall knowledge. It GUIDES the model and FLAGS unexpected parts for review; it never deletes what a drawing shows and never supplies values. Family synonyms are matched as whole words in English labels/kinds. Exclusion is by role, not by name: plain 'silicone' or 'gasket' identifies no system.",
+  "families": {
+    "mullion": {
+      "synonyms": [
+        "mullion",
+        "mullion profile",
+        "half mullion",
+        "corner mullion"
+      ],
+      "article_type": "bar"
+    },
+    "transom": {
+      "synonyms": [
+        "transom",
+        "transom profile",
+        "half transom"
+      ],
+      "article_type": "bar"
+    },
+    "pressure_plate": {
+      "synonyms": [
+        "pressure plate",
+        "pressure-plate",
+        "clamping plate",
+        "clamp plate"
+      ],
+      "article_type": "bar"
+    },
+    "cover_cap": {
+      "synonyms": [
+        "cover cap",
+        "cover-cap",
+        "capping",
+        "snap cap",
+        "face cap"
+      ],
+      "article_type": "bar"
+    },
+    "end_cap": {
+      "synonyms": [
+        "end cap",
+        "end-cap",
+        "end plug"
+      ],
+      "article_type": "piece"
+    },
+    "isolator": {
+      "synonyms": [
+        "isolator",
+        "thermal break",
+        "thermal isolator",
+        "thermal separator",
+        "insulator strip"
+      ],
+      "article_type": "bar"
+    },
+    "gasket_internal": {
+      "synonyms": [
+        "inner gasket",
+        "internal gasket",
+        "inner glazing gasket",
+        "internal glazing gasket",
+        "backing gasket"
+      ],
+      "article_type": "parameter"
+    },
+    "gasket_external": {
+      "synonyms": [
+        "outer gasket",
+        "external gasket",
+        "outer glazing gasket",
+        "external glazing gasket",
+        "wedge gasket"
+      ],
+      "article_type": "parameter"
+    },
+    "structural_silicone": {
+      "synonyms": [
+        "structural silicone",
+        "structural sealant",
+        "structural adhesive",
+        "structural bond"
+      ],
+      "article_type": "parameter"
+    },
+    "weather_seal": {
+      "synonyms": [
+        "weather seal",
+        "weatherseal",
+        "weather sealant",
+        "silicone sealant",
+        "weather silicone"
+      ],
+      "article_type": "parameter"
+    },
+    "toggle": {
+      "synonyms": [
+        "toggle",
+        "toggle clip",
+        "glazing toggle",
+        "retaining clip"
+      ],
+      "article_type": "piece"
+    },
+    "spacer": {
+      "synonyms": [
+        "spacer",
+        "u-insert",
+        "u insert",
+        "d/g spacer",
+        "spacer tape",
+        "spacer profile"
+      ],
+      "article_type": "bar"
+    },
+    "glass_support": {
+      "synonyms": [
+        "glass support",
+        "glazing support",
+        "setting block",
+        "glass carrier"
+      ],
+      "article_type": "piece"
+    },
+    "glazing_adaptor": {
+      "synonyms": [
+        "glazing adaptor",
+        "glazing adapter",
+        "adaptor",
+        "adapter"
+      ],
+      "article_type": "bar"
+    },
+    "cleat": {
+      "synonyms": [
+        "cleat",
+        "transom cleat",
+        "corner cleat",
+        "connector",
+        "transom connector",
+        "spigot"
+      ],
+      "article_type": "piece"
+    },
+    "bracket": {
+      "synonyms": [
+        "bracket",
+        "anchor bracket",
+        "floor bracket",
+        "fixing bracket"
+      ],
+      "article_type": "piece"
+    },
+    "sleeve": {
+      "synonyms": [
+        "sleeve",
+        "expansion sleeve",
+        "splice sleeve",
+        "spigot sleeve"
+      ],
+      "article_type": "piece"
+    },
+    "screw": {
+      "synonyms": [
+        "screw",
+        "self tapping screw",
+        "self-tapping screw",
+        "machine screw",
+        "fastener"
+      ],
+      "article_type": "piece"
+    },
+    "bolt": {
+      "synonyms": [
+        "bolt",
+        "threaded rod",
+        "stud"
+      ],
+      "article_type": "piece"
+    },
+    "rivet": {
+      "synonyms": [
+        "rivet",
+        "blind rivet"
+      ],
+      "article_type": "piece"
+    },
+    "anchor": {
+      "synonyms": [
+        "anchor",
+        "anchor bolt",
+        "expansion anchor",
+        "cast-in channel"
+      ],
+      "article_type": "piece"
+    },
+    "washer": {
+      "synonyms": [
+        "washer",
+        "serrated washer"
+      ],
+      "article_type": "piece"
+    },
+    "nut": {
+      "synonyms": [
+        "nut"
+      ],
+      "article_type": "piece"
+    },
+    "glass": {
+      "synonyms": [
+        "glass",
+        "glazing unit",
+        "igu",
+        "double glazed unit",
+        "dgu",
+        "spandrel glass",
+        "insulated glass"
+      ],
+      "article_type": "parameter"
+    },
+    "infill": {
+      "synonyms": [
+        "infill",
+        "panel",
+        "spandrel panel",
+        "insulated panel"
+      ],
+      "article_type": "parameter"
+    },
+    "sealing_tape": {
+      "synonyms": [
+        "butyl tape",
+        "butyle tape",
+        "sealing tape",
+        "foam tape"
+      ],
+      "article_type": "piece"
+    }
+  },
+  "fastener_families": [
+    "screw",
+    "bolt",
+    "rivet",
+    "anchor"
+  ],
+  "systems": {
+    "CC": {
+      "signature": [
+        "pressure_plate",
+        "cover_cap"
+      ],
+      "expected": [
+        "mullion",
+        "transom",
+        "isolator",
+        "gasket_internal",
+        "gasket_external",
+        "pressure_plate",
+        "cover_cap",
+        "end_cap",
+        "screw",
+        "glass",
+        "cleat",
+        "glass_support"
+      ],
+      "glass_retention": "mechanical: screws through pressure plate and isolator into the profile screw chute"
+    },
+    "SG": {
+      "signature": [
+        "structural_silicone",
+        "toggle"
+      ],
+      "expected": [
+        "mullion",
+        "transom",
+        "glass",
+        "gasket_internal",
+        "structural_silicone",
+        "toggle",
+        "spacer",
+        "weather_seal",
+        "cleat",
+        "glass_support"
+      ],
+      "glass_retention": "chemical: structural silicone bond; toggles as mechanical retention",
+      "notes": "glass_support carries the glass dead load before and after the structural silicone cures"
+    }
+  },
+  "semi_type": "semi-SG",
+  "system_only_families": {
+    "CC": [
+      "pressure_plate",
+      "cover_cap",
+      "gasket_external"
+    ],
+    "SG": [
+      "structural_silicone",
+      "toggle"
+    ]
+  },
+  "axes": {
+    "_doc": "Frame members that define the two axes of a curtain wall. In a semi-SG detail one axis is CC (pressure plate/cover cap) and the other SG (structural silicone/toggle); both systems on the same axis is flagged for review.",
+    "vertical": [
+      "mullion"
+    ],
+    "horizontal": [
+      "transom"
+    ]
+  }
+}

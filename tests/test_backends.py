@@ -171,7 +171,7 @@ def test_switch_backends_preserves_shared_pipeline_and_outputs(tmp_path,backend,
     assert {request['model'] for request in requests} == {expected_model}
     assert read(run/'cost_summary.json')['reported_cost_usd']==pytest.approx(.04)
     for dataset in ['components','entities','relationships','measurements','table_rows']:
-        for ext in ['json','parquet','csv']:assert (run/'data'/f'{dataset}.{ext}').exists()
+        assert (run/'data'/f'{dataset}.json').exists() and not (run/'data'/f'{dataset}.csv').exists()
     assert (run/'review.html').is_file()
     before=list((run/'raw_responses').glob('*.jsonl'))
     assert agent(pdf_url=pdf.as_uri()).coverage==result.coverage

@@ -108,6 +108,88 @@ def index(run,queue):
     return pages
 
 
+ARTICLE_TOKEN = re.compile(r'(?<![\w.-])(?:[A-Z]{1,4}\d{3,8}|\d{3}[ \u00a0]\d{3}|\d{5,8})(?:-\d+(?:\.\d+)?)?(?![\w.-])', re.I)
+
+
+def article_mentions(text):
+    # OCR sometimes fuses a lower-case label with its following numeric callout.
+    text = re.sub(r'(?<=[a-z])(?=\d{5,8}(?!\d))', ' ', text)
+    return {re.sub(r'\s+', '', match.group()).upper() for match in ARTICLE_TOKEN.finditer(text)}
+
+
+def support_pages(pages, target, articles, limit=2):
+    """Return bounded candidates with their match reason, retaining original PDF numbering."""
+    ranked = []
+    for page in pages:
+        number = page['pdf_page']
+        if number == target or re.search(r'^\s*INDEX\s*$', page['text'], re.I | re.M):
+            continue
+        matches = sorted(articles & article_mentions(page['text']))
+        if matches:
+            ranked.append(dict(pdf_page=number, articles=matches, reason='article_match'))
+    chosen, covered = [], set()
+    while ranked and len(chosen) < limit:
+        candidate = min(ranked, key=lambda p: (-len(set(p['articles'])-covered), -len(p['articles']),
+                                               abs(p['pdf_page']-target), p['pdf_page']))
+        ranked.remove(candidate)
+        chosen.append(candidate)
+        covered.update(candidate['articles'])
+    return chosen
+
+
+def catalogue_support(run, pages, targets):
+    """Search the whole catalogue. OCR is a retrieval aid; a crop remains the visual evidence."""
+    from .references import PAGE, RELATIVE
+
+    cache = run/'search_ocr_v1'
+    rows = []
+    ocr = None
+    with pymupdf.open(run/'source.pdf') as pdf:
+        for record in pages:
+            number = record['pdf_page']
+            native = record['native_text']
+            path = cache/f'p{number:04}.json'
+            if not path.exists():
+                # A title or footer alone doesn't make drawing callouts searchable.
+                if len(native.strip()) >= 180 and article_mentions(native):
+                    dump(path, {'text': '', 'method': 'native'})
+                else:
+                    if ocr is None:
+                        try:
+                            from rapidocr_onnxruntime import RapidOCR
+                        except ImportError as error:
+                            raise RuntimeError('Catalogue dependency search requires the OCR extra') from error
+                        ocr = RapidOCR(intra_op_num_threads=2, inter_op_num_threads=1)
+                    page = pdf[number-1]
+                    zoom = 1700/max(page.rect.width,page.rect.height)
+                    image = page.get_pixmap(matrix=pymupdf.Matrix(zoom,zoom)).tobytes('png')
+                    found, _ = ocr(image)
+                    dump(path, {'text': '\n'.join(row[1] for row in (found or []) if row[2]>=.60),
+                                'method': 'ocr'})
+            rows.append(dict(pdf_page=number, text=native+'\n'+read(path)['text']))
+    by_page = {row['pdf_page']: row['text'] for row in rows}
+    printed = defaultdict(list)
+    for record in pages:
+        if record.get('printed_page') is not None:
+            printed[str(record['printed_page'])].append(record['pdf_page'])
+    plan = {}
+    for target in targets:
+        text = by_page[target]
+        explicit = {}
+        for match in RELATIVE.finditer(text):
+            step = 1 if match['where'].lower() in ('next', 'following') else -1
+            if target+step in by_page:
+                explicit[target+step] = dict(pdf_page=target+step, articles=[], reason='printed_reference')
+        for match in PAGE.finditer(text):
+            hits = printed[match['page']]
+            if len(hits)==1 and hits[0]!=target:
+                explicit[hits[0]] = dict(pdf_page=hits[0], articles=[], reason='printed_reference')
+        for candidate in support_pages(rows, target, article_mentions(text)):
+            explicit.setdefault(candidate['pdf_page'], candidate)
+        plan[str(target)] = list(explicit.values())[:2]
+    return plan
+
+
 def band_split(tables,low=.3,high=.7):
     """Midline unless it crosses a detected table; then the nearest table edge inside [low, high]."""
     spans=[(t['bbox'][1],t['bbox'][3]) for t in tables if isinstance(t,dict) and len(t.get('bbox') or [])==4]

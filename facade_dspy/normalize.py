@@ -7,6 +7,10 @@ def normalize(parsed):
     data=json.loads(json.dumps(parsed))
     notes=[]
     extras=[]
+    # Optional schema fields are kept as returned; derived from schema.py so the two never drift.
+    from .schema import Detail,Measurement,Node,Relation
+    optional={kind:{name for name,field in model.model_fields.items() if not field.is_required()}
+              for kind,model in (('detail',Detail),('node',Node),('relation',Relation),('measurement',Measurement))}
     shapes={
       'detail':{'id':None,'title':'Unclassified detail','drawing_refs':[],'bbox':[0,0,1,1]},
       'node':{'id':None,'detail_id':None,'article_id':None,'kind':'unclassified','label':'Unlabelled item',
@@ -21,7 +25,7 @@ def normalize(parsed):
             extras.append({'path':path,'unstructured_value':obj});obj={}
         defaults=shapes[kind]
         for key in list(obj):
-            if key not in defaults:
+            if key not in defaults and key not in optional.get(kind, ()):
                 extras.append({'path':path,'field':key,'value':obj.pop(key)})
         for key,default in defaults.items():
             if key not in obj:

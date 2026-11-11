@@ -32,9 +32,23 @@ def zip_results(run,destination,snapshot=None):
     return destination
 
 
-def main():
-    if hasattr(sys.stdout,'reconfigure'):sys.stdout.reconfigure(encoding='utf-8')
-    if hasattr(sys.stderr,'reconfigure'):sys.stderr.reconfigure(encoding='utf-8')
+def page_numbers(value):
+    """Parse physical page numbers and inclusive ranges in requested order."""
+    pages = {}
+    try:
+        for item in value.split(','):
+            first, separator, last = item.strip().partition('-')
+            start = int(first)
+            stop = int(last) if separator else start
+            if not 1 <= start <= stop <= 2000:
+                raise ValueError
+            pages.update(dict.fromkeys(range(start, stop + 1)))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError('Use page numbers or ranges such as 10-19,51') from error
+    return list(pages)
+
+
+def build_parser():
     parser=argparse.ArgumentParser(description='DSPy PDF extraction agent using Claude Code or OpenCode/OpenAI as its visual tool')
     parser.add_argument('pdf_url',help='HTTP(S) PDF URL, file:// URL, or local PDF path')
     parser.add_argument('--out',default='runs')
@@ -48,25 +62,44 @@ def main():
     parser.add_argument('--replay',action='store_true',help='Reuse saved records only; never launch either model backend')
     parser.add_argument('--index-only',action='store_true',help='Download/render/index locally, with no model calls')
     parser.add_argument('--profile',action='store_true',help='Save Pyinstrument HTML and stage timings in a new out/profiles/ folder')
-    parser.add_argument('--pilot-pages',help='Comma-separated PDF pages for the initial source-check pilot')
+    parser.add_argument('--pilot-pages',type=page_numbers,help='Physical pages for the initial source check, e.g. 10-11')
+    parser.add_argument('--target-pages',type=page_numbers,help='Physical page numbers or ranges, e.g. 10-19,51')
+    parser.add_argument('--mlflow-db',type=Path,help='Optional local MLflow SQLite database for DSPy and pipeline traces')
     parser.add_argument('--compare',action='append',default=[],help='Existing other-document results; manufacturer/system matching is mandatory')
     parser.add_argument('--export-zip',help='Create a data-only results ZIP at this new path')
-    args=parser.parse_args()
+    return parser
+
+
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if args.claude_executable and args.backend_executable:parser.error('Use only one executable override')
     if args.claude_executable and args.backend=='opencode':parser.error('--claude-executable is only for Claude Code; use --backend-executable')
     url=args.pdf_url
     if urlsplit(url).scheme not in ['http','https','file'] and Path(url).is_file():url=Path(url).resolve().as_uri()
-    pilot=[int(p) for p in args.pilot_pages.split(',')] if args.pilot_pages else None
+    if args.mlflow_db:
+        import mlflow
+        database=args.mlflow_db.resolve()
+        database.parent.mkdir(parents=True,exist_ok=True)
+        mlflow.set_tracking_uri('sqlite:///'+database.as_posix())
+        mlflow.set_experiment('facade-catalogue')
+        mlflow.dspy.autolog()
     program=FacadeExtractionAgent(out=args.out,budget_usd=args.budget_usd,reserve_usd=args.reserve_usd,
         cli_budget_usd=args.cli_budget_usd,model=args.model,backend=args.backend or ('claude-code' if args.claude_executable else None),
         command=[args.backend_executable or args.claude_executable] if args.backend_executable or args.claude_executable else None,
-        accept_cli_estimates=args.accept_cli_cost_estimates,reuse=args.reuse,replay=args.replay,pilot_pages=pilot,
-        compare=args.compare,index_only=args.index_only,profile=args.profile)
+        accept_cli_estimates=args.accept_cli_cost_estimates,reuse=args.reuse,replay=args.replay,pilot_pages=args.pilot_pages,
+        compare=args.compare,index_only=args.index_only,profile=args.profile,target_pages=args.target_pages,trace=bool(args.mlflow_db))
     try:
         with redirect_stdout(sys.stderr):result=program(pdf_url=url)
         output=dict(output_directory=result.output_directory,snapshot_directory=result.snapshot_directory,coverage=result.coverage)
         if program.profiling.report_path:output['profile_report']=str(program.profiling.report_path)
         if args.export_zip:output['results_zip']=str(zip_results(Path(result.output_directory),args.export_zip,result.snapshot_directory))
+        if args.mlflow_db:
+            output['mlflow_trace_id']=mlflow.get_last_active_trace_id()
+            mlflow.flush_trace_async_logging()
         print(json.dumps(output,ensure_ascii=False,indent=2))
     except Exception as exc:
         parser.exit(2,type(exc).__name__+': '+str(exc)+'\n')

@@ -1,0 +1,852 @@
+{
+  "$defs": {
+    "EdgeReference": {
+      "additionalProperties": false,
+      "properties": {
+        "rail_end": {
+          "anyOf": [
+            {
+              "enum": [
+                "x0",
+                "x1"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rail End"
+        },
+        "measured_from": {
+          "enum": [
+            "rail_end",
+            "dimension_line"
+          ],
+          "title": "Measured From",
+          "type": "string"
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset"
+        },
+        "offset_unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset Unit"
+        }
+      },
+      "required": [
+        "rail_end",
+        "measured_from"
+      ],
+      "title": "EdgeReference",
+      "type": "object"
+    },
+    "EdgeSpacing": {
+      "additionalProperties": false,
+      "description": "End-to-centre distance from a rail end (x0 or x1) to the centre of the nearest article.\nWhen the catalogue measures to a dimension line, the line offset is added or subtracted.",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "bound": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact",
+                "minimum",
+                "maximum",
+                "interval"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bound"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Condition"
+        },
+        "datum": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Datum"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "edge_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EdgeReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rail"
+        },
+        "printed_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Value as printed, before the dimension-line offset.",
+          "title": "Printed Value"
+        },
+        "offset_applied": {
+          "anyOf": [
+            {
+              "enum": [
+                "added",
+                "subtracted",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset Applied"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "EdgeSpacing",
+      "type": "object"
+    },
+    "Quantity": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "bound": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact",
+                "minimum",
+                "maximum",
+                "interval"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bound"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Condition"
+        },
+        "datum": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Datum"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "per": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per"
+        },
+        "per_article": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Article"
+        },
+        "per_occurrence_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Occurrence Id"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "Quantity",
+      "type": "object"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "title": "Page",
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "detail",
+            "table",
+            "profile_drawing",
+            "text",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bbox"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        }
+      },
+      "required": [
+        "page",
+        "kind"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    },
+    "Spacing": {
+      "additionalProperties": false,
+      "description": "Centre-to-centre distance between neighbouring articles on the same rail.",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "bound": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact",
+                "minimum",
+                "maximum",
+                "interval"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bound"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Condition"
+        },
+        "datum": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Datum"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "rail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rail"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "Spacing",
+      "type": "object"
+    },
+    "Value": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "bound": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact",
+                "minimum",
+                "maximum",
+                "interval"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bound"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Condition"
+        },
+        "datum": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Datum"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "Value",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "profile_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Article ID as printed; null when no article ID is printed.",
+      "title": "Profile Id"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Label"
+    },
+    "occurrence_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Occurrence Id"
+    },
+    "profile_role": {
+      "enum": [
+        "mullion",
+        "transom",
+        "pressure_plate",
+        "cover_cap",
+        "end_cap",
+        "isolator",
+        "gasket_internal",
+        "gasket_external",
+        "structural_silicone",
+        "weather_seal",
+        "toggle",
+        "spacer",
+        "glass_support",
+        "glazing_adaptor",
+        "cleat",
+        "bracket",
+        "sleeve",
+        "screw",
+        "bolt",
+        "rivet",
+        "anchor",
+        "washer",
+        "nut",
+        "glass",
+        "infill",
+        "sealing_tape",
+        "other"
+      ],
+      "title": "Profile Role",
+      "type": "string"
+    },
+    "role_clarification": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Role Clarification"
+    },
+    "article_type": {
+      "anyOf": [
+        {
+          "enum": [
+            "bar",
+            "piece",
+            "parameter"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Article Type"
+    },
+    "system": {
+      "items": {
+        "enum": [
+          "SG",
+          "CC",
+          "semi-SG"
+        ],
+        "type": "string"
+      },
+      "title": "System",
+      "type": "array"
+    },
+    "depth": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Value"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "edge_spacing": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EdgeSpacing"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "spacing": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Spacing"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "quantity": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Quantity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "material": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Value"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "finish": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Value"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "color": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Value"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "other": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Value"
+      },
+      "description": "All else found about this article.",
+      "title": "Other",
+      "type": "object"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "conflicts": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Conflicts",
+      "type": "array"
+    },
+    "evidence_status": {
+      "enum": [
+        "explicit",
+        "visual",
+        "unresolved"
+      ],
+      "title": "Evidence Status",
+      "type": "string"
+    },
+    "inference_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Inference Reason"
+    },
+    "missing_information": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Information",
+      "type": "array"
+    }
+  },
+  "required": [
+    "profile_id",
+    "profile_role",
+    "article_type",
+    "evidence_status"
+  ],
+  "title": "ArticleRecord",
+  "type": "object"
+}

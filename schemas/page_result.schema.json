@@ -26,6 +26,54 @@
           "minItems": 4,
           "title": "Bbox",
           "type": "array"
+        },
+        "system_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "SG",
+                "CC",
+                "semi-SG"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "System Type"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        },
+        "view_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "profile_2d",
+                "assembly_section_2d",
+                "assembly_isometric",
+                "assembly_orthographic",
+                "table"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "View Type"
         }
       },
       "required": [
@@ -35,6 +83,115 @@
         "bbox"
       ],
       "title": "Detail",
+      "type": "object"
+    },
+    "EdgeReference": {
+      "additionalProperties": false,
+      "properties": {
+        "rail_end": {
+          "anyOf": [
+            {
+              "enum": [
+                "x0",
+                "x1"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rail End"
+        },
+        "measured_from": {
+          "enum": [
+            "rail_end",
+            "dimension_line"
+          ],
+          "title": "Measured From",
+          "type": "string"
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset"
+        },
+        "offset_unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset Unit"
+        }
+      },
+      "required": [
+        "rail_end",
+        "measured_from"
+      ],
+      "title": "EdgeReference",
+      "type": "object"
+    },
+    "FixingOffset": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "number"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unit"
+        },
+        "from_datum": {
+          "title": "From Datum",
+          "type": "string"
+        },
+        "to_datum": {
+          "title": "To Datum",
+          "type": "string"
+        },
+        "evidence": {
+          "title": "Evidence",
+          "type": "string"
+        },
+        "bbox": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "title": "Bbox",
+          "type": "array"
+        }
+      },
+      "required": [
+        "value",
+        "unit",
+        "from_datum",
+        "to_datum",
+        "evidence",
+        "bbox"
+      ],
+      "title": "FixingOffset",
       "type": "object"
     },
     "Instruction": {
@@ -170,6 +327,83 @@
           "minItems": 4,
           "title": "Bbox",
           "type": "array"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence"
+        },
+        "rail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rail"
+        },
+        "edge_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EdgeReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "bound": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact",
+                "minimum",
+                "maximum",
+                "interval"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bound"
+        },
+        "per": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per"
+        },
+        "per_node_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Node Id"
         }
       },
       "required": [
@@ -255,6 +489,145 @@
           "minItems": 4,
           "title": "Bbox",
           "type": "array"
+        },
+        "article_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "bar",
+                "piece",
+                "parameter"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Article Type"
+        },
+        "finish": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finish"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Color"
+        },
+        "profile_role": {
+          "anyOf": [
+            {
+              "enum": [
+                "mullion",
+                "transom",
+                "pressure_plate",
+                "cover_cap",
+                "end_cap",
+                "isolator",
+                "gasket_internal",
+                "gasket_external",
+                "structural_silicone",
+                "weather_seal",
+                "toggle",
+                "spacer",
+                "glass_support",
+                "glazing_adaptor",
+                "cleat",
+                "bracket",
+                "sleeve",
+                "screw",
+                "bolt",
+                "rivet",
+                "anchor",
+                "washer",
+                "nut",
+                "glass",
+                "infill",
+                "sealing_tape",
+                "other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Role"
+        },
+        "role_clarification": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required when profile_role is 'other'.",
+          "title": "Role Clarification"
+        },
+        "evidence_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "explicit",
+                "visual",
+                "unresolved"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Status"
+        },
+        "inference_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inference Reason"
+        },
+        "missing_information": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Missing Information"
         }
       },
       "required": [
@@ -327,6 +700,234 @@
           "default": null,
           "description": "What on the page shows this relation: quoted text, or the callout/leader/contact seen in the drawing.",
           "title": "Evidence"
+        },
+        "fastener_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fastener Id"
+        },
+        "relation_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "clamped",
+                "bonded",
+                "fixed",
+                "supported",
+                "movement",
+                "insertion",
+                "other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Relation Type"
+        },
+        "relation_clarification": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required when relation_type is 'other'.",
+          "title": "Relation Clarification"
+        },
+        "system_part": {
+          "anyOf": [
+            {
+              "enum": [
+                "SG",
+                "CC",
+                "semi-SG"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Which system part this relation belongs to (needed in semi-SG details).",
+          "title": "System Part"
+        },
+        "passes_through": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Node IDs the fastener passes through, in order.",
+          "title": "Passes Through"
+        },
+        "engages_in": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Node ID the fastener finally engages in.",
+          "title": "Engages In"
+        },
+        "insertion_direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "exterior_to_interior",
+                "interior_to_exterior",
+                "top_down",
+                "bottom_up",
+                "side",
+                "other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Insertion Direction"
+        },
+        "evidence_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "explicit",
+                "visual",
+                "unresolved"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Status"
+        },
+        "inference_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inference Reason"
+        },
+        "missing_information": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Missing Information"
+        },
+        "participants": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/RelationParticipant"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Participants"
+        },
+        "fixing_evidence": {
+          "anyOf": [
+            {
+              "enum": [
+                "engagement",
+                "alignment",
+                "fixing_location"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fixing Evidence"
+        },
+        "fastener_position": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fastener Position"
+        },
+        "fastener_size": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fastener Size"
+        },
+        "distance_offsets": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/FixingOffset"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Distance Offsets"
         }
       },
       "required": [
@@ -338,6 +939,26 @@
         "bbox"
       ],
       "title": "Relation",
+      "type": "object"
+    },
+    "RelationParticipant": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "role": {
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "role"
+      ],
+      "title": "RelationParticipant",
       "type": "object"
     },
     "Table": {

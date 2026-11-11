@@ -19,12 +19,14 @@ class Budget:
         held=sum(r['reserved_usd'] for r in rows if r['status']!='settled')
         return rows,settled,held
 
-    def reserve(self,request_hash,preflight):
+    def reserve(self,request_hash,preflight,*,amount=None):
+        amount=self.reserve_amount if amount is None else amount
+        if not math.isfinite(amount) or amount<=0:raise ValueError("Invalid reservation")
         with exclusive_lock(self.lock):
             rows,spent,held=self.state()
-            if spent+held+self.reserve_amount>self.cap:raise BudgetStopped('Next reservation cannot fit the authorized cumulative budget')
+            if spent+held+amount>self.cap:raise BudgetStopped('Next reservation cannot fit the authorized cumulative budget')
             ident=str(uuid.uuid4())
-            rows.append(dict(attempt_id=ident,request_hash=request_hash,status='reserved',reserved_usd=self.reserve_amount,
+            rows.append(dict(attempt_id=ident,request_hash=request_hash,status='reserved',reserved_usd=amount,
                 preflight=preflight,cost_mode=preflight.get('backend','Claude Code')+' client-side estimate; not a guaranteed provider billing ceiling'))
             dump(self.path,rows)
         return ident

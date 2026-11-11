@@ -22,7 +22,6 @@ from facade_dspy.cli import zip_results
 from facade_dspy.program import FacadeExtractionAgent
 from facade_dspy.storage import read,dump,filehash
 from facade_dspy.schema import validate
-import polars as pl
 import zipfile,hashlib
 
 original=Path('test_results/alupco_5pages_f5f8e9170c664c6ba0d2ce0bf77d926e') # optional saved page subset
@@ -34,7 +33,7 @@ if pdf.is_file():
     dump(out/'page_selection.json',read(original/'page_selection.json'))
 else:
     import pymupdf
-    source=Path('data/50SG ALUPCO PDF COMBINED.pdf').resolve()
+    source=Path(os.environ.get('FACADE_MOCK_PDF', 'data/50SG ALUPCO PDF COMBINED.pdf')).resolve()
     pdf=out/'selected_pages.pdf'
     pages=[1,12,13,14,15]
     with pymupdf.open(source) as full, pymupdf.open() as selected:
@@ -85,8 +84,6 @@ datasets={}
 for path in sorted(data.glob('*.json')):
     name=path.stem
     count=len(read(path))
-    assert pl.read_parquet(path.with_suffix('.parquet')).height==count
-    assert pl.read_csv(path.with_suffix('.csv')).height==count
     datasets[name]=count
 entities={v['canonical_id']:v for v in read(data/'entities.json')}
 details={v['canonical_id']:v for v in read(data/'details.json')}
@@ -116,8 +113,8 @@ for n in range(1,6):
     assert merged.pop('_metadata')['review_status']=='proposed'
     validate(merged,n)
 assert (snapshot/'review.html').is_file()
-for v in read(data/'source_crops.json'):
-    assert (snapshot/v['image']).is_file()
+for name in ('article_database','assembly_database','detail_outputs'):
+    assert datasets[name]>0
 predictions=read(data/'all_proposals.json')
 cases=[]
 for proposal in predictions:
@@ -166,7 +163,7 @@ for name in datasets:
     assert read(second_snapshot/'data'/f'{name}.json')==read(data/f'{name}.json')
 replayed=FacadeExtractionAgent(out=out/'replay',reuse=second.output_directory,replay=True)(pdf_url=pdf.as_uri())
 replay_snapshot=Path(replayed.snapshot_directory)
-for name in ('relationships','graph_relationships'):
+for name in ('relationships','graph_relationships','article_database','assembly_database','detail_outputs'):
     assert read(replay_snapshot/'data'/f'{name}.json')==read(data/f'{name}.json')
 for directory in ('reviews','verifications'):
     evidence=lambda snap:{p.name:p.read_bytes() for p in (snap/directory).glob('*.json')}

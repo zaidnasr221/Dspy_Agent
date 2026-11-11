@@ -8,13 +8,7 @@ runs/
 .env
 .env.*
 !.env.example
-.env
-.env.*
-!.env.example
-.venv/
 venv/
-__pycache__/
-.pytest_cache/
 *.pyc
 *.log
 data/
@@ -22,3 +16,6 @@ output/
 outputs/
 test_results/
 *.zip
+mlruns/
+build/
+dist/

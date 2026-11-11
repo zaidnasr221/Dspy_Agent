@@ -167,6 +167,52 @@ Protocol references: [OpenCode CLI](https://opencode.ai/docs/cli/),
 [OpenCode 1.19.0 image Read implementation](https://github.com/anomalyco/opencode/blob/v1.19.0/packages/opencode/src/tool/read.ts),
 [OpenAI model catalogue](https://developers.openai.com/api/docs/models).
 
+## Scoped catalogue extraction with OpenAI and MLflow
+
+Install from the checkout with `python -m pip install ".[ocr,observability]"`.
+Set `OPENAI_API_KEY` in the environment, then run the installed command with the PDF path:
+
+```powershell
+facade-extract "data/ALUPCO50SG CAT.(3rd ED 2011).pdf" --backend openai --budget-usd 5 --target-pages 51,10-19 --pilot-pages 51 --out test_results/catalogue --mlflow-db test_results/catalogue/traces.db
+```
+
+The scoped run searches the whole catalogue and caches OCR where native text
+offers insufficient search terms. It supplies up to two support pages for each
+target based on explicit references and article matches. Target and support pages
+keep their original physical numbers. A failed pilot review is reported in
+coverage while the explicitly selected batch remains in scope. Check
+`remaining_target_pages` and the review findings before using the results.
+
+The direct backend uses GPT-6.1 Sol with low reasoning effort. It counts input
+tokens and reserves the uncached input price plus the output-token limit before
+each generation. Target and support calls share a ledger. MLflow is opt-in and
+uses a local SQLite database for DSPy traces and pipeline stage timing.
+
+Compare two saved runs against the same PDF by passing their document output folders:
+
+```powershell
+python -m facade_dspy.compare_batch "path/to/baseline/PDF-hash" "path/to/rerun/PDF-hash" --pages 10-19 --out comparison.json
+```
+
+The comparison matches article IDs and assembly participants by page and reports
+changes to fixings and measured values. It measures agreement between the runs.
+
+### Evidence explanations in MLflow
+
+With tracing enabled, new direct OpenAI calls include the actual prompt, schema,
+source-image attachments, JSON response and token/cost receipt in an LLM span.
+
+Create a clearly labelled audit from saved exports with:
+
+```powershell
+python -m facade_dspy.explain "path/to/PDF-hash-run" --mlflow-db "path/to/traces.db"
+```
+
+The audit adds one page-level explanation per target, including support-page
+selection, source images, field evidence, catalogue row candidates, relationship
+verdicts, unresolved questions and system-classification evidence. It uses saved
+results and makes zero model calls. It preserves the original execution traces.
+
 ## Existing commands
 
 Run from the project folder:
