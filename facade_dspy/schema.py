@@ -420,3 +420,75 @@ def validate_output(value):
             if ref not in known:
                 raise ValueError(f'Relation references unknown article: {ref}')
     return obj.model_dump()
+
+
+# ---------------------------------------------------------------------------------------------
+# Catalogue deliverables (classification process): ARTICLE DB = one record per article across the
+# whole catalogue; ASSEMBLY DB = every verified relation. Field order follows the deliverables list.
+
+class Occurrence(Record):
+    page:int
+    detail_id:str
+    occurrence_id:str|None=None
+    label:str|None=None
+    view_type:ViewType|None=None
+
+
+class CatalogueArticle(Record):
+    profile_id:str|None=Field(description='Article ID as printed; null only for a part shown without an ID.')
+    profile_role:ProfileRole
+    role_clarification:str|None=None
+    article_type:ArticleType|None=Field(description='Fabrication (FWR) type: bar, piece or parameter.')
+    depth:Value|None=None
+    edge_spacing:EdgeSpacing|None=Field(default=None,description='Pieces only.')
+    spacing:Spacing|None=Field(default=None,description='Pieces only.')
+    quantity:Quantity|None=None
+    material:Value|None=None
+    finish:Value|None=None
+    color:Value|None=None
+    other:dict[str,Value]=Field(default_factory=dict,description='All else found.')
+    label:str|None=None
+    systems:list[SystemType]=Field(default_factory=list)
+    occurrences:list[Occurrence]=Field(min_length=1)
+    sources:list[SourceRef]=Field(default_factory=list)
+    conflicts:list[str]=Field(default_factory=list)
+    evidence_status:EvidenceStatus
+    missing_information:list[str]=Field(default_factory=list)
+
+
+class CatalogueAssembly(AssemblyRecord):
+    catalogue:str
+    detail_title:str|None=None
+
+
+class ArticleDB(Record):
+    catalogue:str
+    articles:list[CatalogueArticle]
+
+
+class AssemblyDB(Record):
+    catalogue:str
+    assemblies:list[CatalogueAssembly]
+
+
+def validate_deliverables(article_db, assembly_db):
+    """Process rules the JSON schema cannot express: pieces-only spacing, unique article IDs,
+    fastener only on 'fixed', participants must exist in the Article DB."""
+    articles=ArticleDB.model_validate(article_db)
+    assemblies=AssemblyDB.model_validate(assembly_db)
+    ids=[a.profile_id for a in articles.articles if a.profile_id]
+    if len(ids)!=len(set(ids)):
+        raise ValueError('Article DB has duplicate profile_id records')
+    known=set(ids)|{a.label for a in articles.articles if a.label}
+    for article in articles.articles:
+        if article.article_type not in (None,'piece') and (article.edge_spacing or article.spacing):
+            raise ValueError(f'edge_spacing/spacing only belong to pieces: {article.profile_id or article.label}')
+    for item in assemblies.assemblies:
+        if item.fastener_assigned is not None and item.relation!='fixed':
+            raise ValueError("fastener_assigned is only allowed when relation is 'fixed'")
+        if item.relation=='other' and not (item.relation_clarification or '').strip():
+            raise ValueError("relation 'other' needs relation_clarification")
+        for participant in item.participants:
+            if participant.article not in known:
+                raise ValueError(f'Assembly participant not in Article DB: {participant.article}')
+    return articles.model_dump(),assemblies.model_dump()

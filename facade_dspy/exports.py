@@ -11,6 +11,7 @@ from .dimension_geometry import recover_depths
 from . import articles as article_index
 from . import assembly as detail_assembly
 from . import references as cross_references
+from . import deliverables
 from .storage import read,dump,objecthash
 from .schema import validate
 from .publication import published_directory
@@ -546,6 +547,16 @@ def export(run,units,identity,status,costs,compare):
     dump(run/'data/article_index.json', index)
     dump(run/'data/reference_links.json', reference_links)
     dump(run/'data/detail_outputs.json', outputs)
+    # Final deliverables of the classification process (catalogue-wide ARTICLE DB and ASSEMBLY DB).
+    catalogue_name=identity.get('document_name') or source.get('file_name') or docid
+    try:
+        article_db,assembly_db=deliverables.build(catalogue_name,outputs)
+    except ValueError as error:
+        article_db,assembly_db=dict(catalogue=catalogue_name,articles=[]),dict(catalogue=catalogue_name,assemblies=[])
+        questions.append(dict(category='deliverable_invalid',message=str(error)[:500],provenance=dict(pdf_page=None)))
+        dataset(run,'questions',questions)
+    dump(run/'data/article_db.json',article_db)
+    dump(run/'data/assembly_db.json',assembly_db)
     for output in outputs:dump(run/'data/details'/detail_assembly.file_name(output),output)
     dump(run/'data/assembly_database.json', assembly_database)
     parents={u['parent'] for u in units if u['parent']};leaves=[u for u in units if u['unit_id'] not in parents]
@@ -603,7 +614,7 @@ def export(run,units,identity,status,costs,compare):
         metadata_only_pages=sorted(metadata_pages),review_status='proposed_not_engineer_verified'))
     links='<p><a href="source.pdf">Original PDF</a> · <a href="coverage.json">Coverage</a> · <a href="cost_summary.json">Costs</a> · <a href="data/components.json">Components (JSON)</a></p>'
     body='<p class="notice">Proposed knowledge. No human engineering approvals. '+html.escape(status)+'</p>'+links
-    body+='<p><a href="data/article_database.json">Article Database (JSON)</a> · <a href="data/assembly_database.json">Assembly Database (JSON)</a> · <a href="data/detail_outputs.json">Per-detail outputs (JSON)</a> · <a href="data/article_index.json">Article index</a> · <a href="data/reference_links.json">Cross-references</a></p>'
+    body+='<p><a href="data/article_db.json"><b>ARTICLE DB</b></a> · <a href="data/assembly_db.json"><b>ASSEMBLY DB</b></a> · <a href="data/article_database.json">Article records (internal)</a> · <a href="data/assembly_database.json">Assembly Database (JSON)</a> · <a href="data/detail_outputs.json">Per-detail outputs (JSON)</a> · <a href="data/article_index.json">Article index</a> · <a href="data/reference_links.json">Cross-references</a></p>'
     body+=f'<p>{len(complete)}/{source["page_count"]} pages have complete proposal coverage. {len(components)} article records; {len(relations)} relationships; {len(rows)} table rows.</p>'
     body+='<input id="search" aria-label="Search records" placeholder="Search article, description or source">'
     body+=table([dict(article_id=c['article_id'],description='; '.join(o['label'] for o in c['observations']),source_pages=sorted({o['provenance']['pdf_page'] for o in c['observations']})) for c in components],['article_id','description','source_pages'])

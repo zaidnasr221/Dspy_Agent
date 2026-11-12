@@ -48,8 +48,9 @@ def test_metric_penalizes_wrong_roles_order_and_evidence():
     assert fields['fastener_assigned'] == fields['assembly_evidence'] == 0
 
 
-def test_only_four_public_contracts():
-    assert set(CONTRACTS) == {'page_result', 'article_record', 'assembly_record', 'detail_output'}
+def test_only_the_public_contracts():
+    # Stage 1 output, the per-detail output, and the two catalogue deliverables (ARTICLE DB, ASSEMBLY DB).
+    assert set(CONTRACTS) == {'page_result', 'article_record', 'assembly_record', 'detail_output', 'article_db', 'assembly_db'}
 
 
 def test_rich_output_verification_and_replay(tmp_path):

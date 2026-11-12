@@ -137,10 +137,14 @@ CHECKPOINT_UPGRADES = {
             'fa8a11bddd02fe187b6bab871c9caa75aadd3cd7856fd1ccd86e38097b3b2015',
             '18ecd834afd3331beeee6aaca91d468c6aab88283bc7cad1a863ab10e57708b1',
             '19d0a9b2e8f9714d88bfb2aecb1c856729c388e176d3e1441fe0af3676fe9db1',
-        ),
-        (
             'fbe6124a12814b91c50d63b7722f4ee800fe55885eb9d06b744787637787d96f',
             '1a71353dd571517675d8d11456e1ee05c322b30edfa2544135e4768db3cb539a',
+            '970b5d835e1f411d3ca4e0a0b575d3bf29647b50e9fef976baa21940775043e2',
+            '3d031857ba1df765501c66d07f21f286d525e595f9ae64e96a6bacd517da42b3',
+        ),
+        (
+            '9bdcd79cfb2ef7eafd94ab9f9f9d6123dad7f6d81170afcea15f30ecf476432a',
+            'fdd60163e8222c47f2da9803a3d2760f4d3a2010a74f514eaae7b92728d6cc1e',
         ),
     ),
     'code:schema.py': (
@@ -161,10 +165,15 @@ CHECKPOINT_UPGRADES = {
             '8e2ca0a0c4c162cd97ecc055228629cdc296c394f69d9e1603446f4178251a11',
             'e274eef478b2d9590e93231a98897558345a0174c676b7bbdb2f1014fb821a7e',
             '50e6791ac2876c7b9b927b7c7510b07bad461ce5c12f8e81416e6b47f94676bf',
-        ),
-        (
             '95d566e88bae5e9a76d86dabf82902f9926d048370f8b871c47467331b04c44e',
             '2af9c150dd4d4e19f690a20e2cefa26b0ddfdff8789b4b0f9fafec23b9361214',
+            '732850af9a3d88109c36b0cdf5739b955f76faa9cd08902b5973767ad3159e9d',
+            '4d3002914c6aaf78c574c5a3ede61f6d273af2daee14fe4ec27ad4c33086a58e',
+            '5a4917d6f0d5fa84bcd3450031f605014458ba61135ac07758e8d51c61c1f611',
+        ),
+        (
+            '3736f78375e5b340a6211baf10d750a7f7341ab2fe5f12219bcbd2d610cefda6',
+            '469c4642bce36d924027c4bfc8cc53f4917a5bce01bc11eabdf8b5ab599b4453',
         ),
     ),
     'code:source.py': (
@@ -196,10 +205,14 @@ CHECKPOINT_UPGRADES = {
         (
             '8decc6ddb9115ac2f4d40626d2635229a3f7fc651a7f0645fded13acad18dd53',
             '20645fd1b70266bdbdefdf0bc042f0807e8957778f7974b2de7ccde0687f4d89',
-        ),
-        (
             'e14b7f28d083f7b4e9e8268a062a0ba89a51113e2b5f50ae74825f4c0fcdf505',
             '8a5f19e595671c5a4c60dac11953e543ca53ba7aa6609215dfdb29cce5e26f7f',
+            'fb1fa034b0d2ca8aa05c29b761dbe7e06de9eb693a0597df3a73f31a3a69efdd',
+            'f65b1b7265348727fa1e390dbcbb3cc098577e1f4d4a8c8dcf3280e0acc4c519',
+        ),
+        (
+            'ae4cf1ce52ea902e42b06187ad735b6b017471e9db02686e4759c9d1501db2d2',
+            '5dcc3abd1cd25ab28ea2d603ac63295319e2f8a02c0cf066fd150a23e6866f6c',
         ),
     ),
 }

@@ -194,7 +194,7 @@ def cc_section():
                          evidence='50 to dimension line', edge_reference=dict(rail_end='x0', measured_from='dimension_line',
                                                                               offset=-5, offset_unit='mm'))]
     return dict(pdf_page=1, page_kind='detail',
-                details=[dict(id='d', title='Transom section', drawing_refs=[], bbox=BOX, system_type='CC', view_type='profile_2d')],
+                details=[dict(id='d', title='Transom section', drawing_refs=[], bbox=BOX, system_type='CC', view_type='assembly_section_2d')],
                 nodes=nodes, relations=relations, measurements=measurements, tables=[],
                 instructions=[dict(detail_id='d', sequence=None, text='Refer next page for isolator sizes', condition=None,
                                    article_refs=['235918'], bbox=BOX)], unresolved=[])
@@ -234,8 +234,10 @@ def test_end_to_end_detail_outputs_without_api(tmp_path):
     assert validate_output(section) and (snap / 'data/details').is_dir()
     assert section['system']['type'] == 'CC' and section['system']['evidence_status'] == 'visual'
     arts = {a['profile_id'] or a['label']: a for a in section['article_database']}
-    assert arts['PP100']['profile_role'] == 'pressure_plate' and arts['PP100']['spacing']['value'] == 300.0
-    assert arts['PP100']['spacing']['bound'] == 'maximum'
+    assert arts['PP100']['profile_role'] == 'pressure_plate' and arts['PP100']['article_type'] == 'bar'
+    # Step 9: spacing belongs to pieces; a value read for a bar is kept under 'other', not dropped.
+    assert 'spacing' not in arts['PP100'] or arts['PP100']['spacing'] is None
+    assert arts['PP100']['other']['spacing']['value'] == 300.0 and arts['PP100']['other']['spacing']['bound'] == 'maximum'
     # Cross-page: the pressure plate's table row on page 2 is attached with its page.
     assert arts['PP100']['other']['depth']['value'] == '11' and 2 in {s['page'] for s in arts['PP100']['sources']}
     # Callout 235918 + printed 14.5 links to variant 235 918-14.5 on page 2, not to 11.4.
@@ -350,3 +352,65 @@ def test_output_folder_has_only_the_needed_files(tmp_path):
                     'source_crops', 'reference_index', 'conflicts', 'cross_document_links'):
         assert f'{dropped}.json' not in names
     assert (data / 'details').is_dir()
+
+
+# --- classification-process deliverables ---------------------------------------------------------
+
+def test_catalogue_deliverables_follow_the_process(tmp_path):
+    pdf = pdf_file(tmp_path / 'fixture.pdf', pages=2)
+    result = FacadeExtractionAgent(out=tmp_path / 'live', budget_usd=1,
+                                   backend_factory=lambda *_: PipelineBackend([]))(pdf_url=pdf.as_uri())
+    data = Path(result.snapshot_directory) / 'data'
+    article_db, assembly_db = read(data / 'article_db.json'), read(data / 'assembly_db.json')
+    first = article_db['articles'][0]
+    # Deliverable field order: profile_id, profile_role, depth, edge_spacing, spacing, quantity, material, finish, color, all else.
+    assert list(first)[:12] == ['profile_id', 'profile_role', 'role_clarification', 'article_type', 'depth', 'edge_spacing',
+                                'spacing', 'quantity', 'material', 'finish', 'color', 'other']
+    ids = [a['profile_id'] for a in article_db['articles'] if a['profile_id']]
+    assert len(ids) == len(set(ids)) and {'PP100', 'CC200', '235918'} <= set(ids)
+    by_id = {a['profile_id'] or a['label']: a for a in article_db['articles']}
+    assert by_id['PP100']['article_type'] == 'bar' and by_id['PP100']['spacing'] is None
+    assert by_id['screw']['article_type'] == 'piece' and by_id['screw']['edge_spacing']['value'] == 45
+    assert {a['relation'] for a in assembly_db['assemblies']} <= {'clamped', 'bonded', 'fixed', 'supported', 'movement', 'insertion', 'other'}
+    fixed = [a for a in assembly_db['assemblies'] if a['relation'] == 'fixed']
+    assert fixed and all(a['fastener_assigned']['type'] == 'screw' for a in fixed)
+    assert all(a['fastener_assigned'] is None for a in assembly_db['assemblies'] if a['relation'] != 'fixed')
+    assert all(p['article'] in by_id for a in assembly_db['assemblies'] for p in a['participants'])
+
+
+def test_profile_2d_view_feeds_the_article_db_only(tmp_path):
+    class ProfileBackend(PipelineBackend):
+        def execute(self, task, prompt, schema, folder, heartbeat=lambda: None):
+            reply = super().execute(task, prompt, schema, folder, heartbeat)
+            if task == 'extraction' and reply['output']['extraction']['pdf_page'] == 1:
+                reply['output']['extraction']['details'][0]['view_type'] = 'profile_2d'
+            return reply
+    pdf = pdf_file(tmp_path / 'fixture.pdf', pages=2)
+    result = FacadeExtractionAgent(out=tmp_path / 'live', budget_usd=1,
+                                   backend_factory=lambda *_: ProfileBackend([]))(pdf_url=pdf.as_uri())
+    data = Path(result.snapshot_directory) / 'data'
+    section = next(o for o in read(data / 'detail_outputs.json') if o['page'] == 1)
+    assert section['assembly_database'] == [] and section['article_database']
+    assert any('is not an assembly' in u for u in section['unresolved'])
+    assert read(data / 'assembly_db.json')['assemblies'] == []
+
+
+def test_fwr_types_follow_the_process():
+    assert rules.default_article_type('gasket_internal') == 'parameter'
+    assert rules.default_article_type('spacer') == 'piece' and rules.default_article_type('toggle') == 'piece'
+    assert rules.default_article_type('pressure_plate') == 'bar' and rules.default_article_type('mullion') == 'bar'
+    assert rules.view_feeds('profile_2d') == 'article' and rules.view_feeds('assembly_isometric') == 'assembly'
+
+
+def test_deliverables_reject_spacing_on_bars_and_fastener_on_non_fixed():
+    from facade_dspy.schema import validate_deliverables
+    art = dict(profile_id='A', profile_role='mullion', article_type='bar', evidence_status='explicit',
+               occurrences=[dict(page=1, detail_id='d')], spacing=dict(value=300, unit='mm'))
+    with pytest.raises(ValueError, match='only belong to pieces'):
+        validate_deliverables(dict(catalogue='c', articles=[art]), dict(catalogue='c', assemblies=[]))
+    art.pop('spacing')
+    asm = dict(assembly_id='a', detail_id='d', page=1, relation='clamped', catalogue='c', evidence=[dict(page=1, kind='detail')],
+               evidence_status='explicit', participants=[dict(article='A', role='x'), dict(article='A', role='y')],
+               fastener_assigned=dict(article_id=None, type='screw'))
+    with pytest.raises(ValueError, match="only allowed when relation is 'fixed'"):
+        validate_deliverables(dict(catalogue='c', articles=[art]), dict(catalogue='c', assemblies=[asm]))

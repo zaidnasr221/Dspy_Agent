@@ -90,6 +90,21 @@ def _label(node, used):
     return label
 
 
+def _piece_only(item):
+    """Step 9: edge_spacing and spacing belong to pieces. A value read for a bar or parameter is kept
+    under 'other' (all else found) instead of being dropped, and is not reported as missing."""
+    if item.get('article_type') in (None, 'piece'):
+        return
+    for field in rules.PIECE_ONLY_FIELDS:
+        value = item.pop(field, None)
+        if value:
+            item['other'][field] = {k: value.get(k) for k in ('value', 'unit', 'bound', 'condition', 'evidence')}
+        if field in item['missing_information']:
+            item['missing_information'].remove(field)
+    item['missing_information'] = [m for m in item['missing_information']
+                                   if not m.startswith(('spacing rail', 'edge_spacing reference'))]
+
+
 def _article(record, nodes, index, used):
     node = nodes[0]
     record = article_index.for_occurrence(record, node, index)
@@ -154,6 +169,7 @@ def _article(record, nodes, index, used):
         item['sources'] += [dict(page=p, kind='other', bbox=None, text=f"linked article {link['article_key']}") for p in link['pages']]
     if record.get('link_status') == 'variant_unresolved':
         item['missing_information'].append('variant not identified: ' + ', '.join(record.get('variant_candidates', [])))
+    _piece_only(item)
     inferred_identity = node.get('article_identity_basis')
     explicit = (bool(record.get('profile_id')) and not inferred_identity) or bool(record.get('table_observations'))
     item['evidence_status'] = 'explicit' if explicit else 'visual'
@@ -283,7 +299,12 @@ def detail_outputs(catalogue, details, entities, article_database, assembly_data
                                    if claim['graph_eligible'] and claim.get('fastener_assigned'))
         shared_fasteners = {key for key, count in fixing_fasteners.items() if count > 1}
         assemblies, pending = [], []
+        feeds = rules.view_feeds(detail.get('view_type'))
         for claim in claims:
+            if feeds == 'article':
+                # Step 6: a single-article drawing or a table feeds the Article DB only.
+                unresolved.append(f"{claim['claim_id']}: relationship on a {detail.get('view_type')} view is not an assembly")
+                continue
             if not claim['graph_eligible']:
                 unresolved.append(f"{claim['claim_id']} {claim['source']} -{claim['predicate']}-> {claim['target']}: "
                                   f"{claim['relationship_status']} ({', '.join(claim['status_reasons'])})")

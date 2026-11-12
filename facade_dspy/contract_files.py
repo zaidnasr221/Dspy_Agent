@@ -6,11 +6,12 @@ import json
 import sys
 from pathlib import Path
 
-from .schema import AssemblyRecord, ArticleRecord, DetailOutput, PageResult
+from .schema import ArticleDB, AssemblyDB, AssemblyRecord, ArticleRecord, DetailOutput, PageResult
 
 CONTRACTS = {
     'page_result': PageResult,
     'article_record': ArticleRecord, 'assembly_record': AssemblyRecord, 'detail_output': DetailOutput,
+    'article_db': ArticleDB, 'assembly_db': AssemblyDB,
 }
 
 

@@ -112,7 +112,7 @@
         "spacer tape",
         "spacer profile"
       ],
-      "article_type": "bar"
+      "article_type": "piece"
     },
     "glass_support": {
       "synonyms": [
@@ -236,7 +236,7 @@
         "sealing tape",
         "foam tape"
       ],
-      "article_type": "piece"
+      "article_type": "parameter"
     }
   },
   "fastener_families": [
@@ -308,5 +308,19 @@
     "horizontal": [
       "transom"
     ]
+  },
+  "fwr_types": {
+    "_doc": "Fabrication (FWR) type, from the classification process: how an article is measured and supplied.",
+    "bar": "linear profile cut to length (mullions, transoms, pressure plates, covers)",
+    "piece": "item placed at intervals (clips, brackets, setting blocks, spacers, toggles, fasteners); only pieces carry edge_spacing and spacing",
+    "parameter": "quantified by a length or perimeter rather than per piece (gaskets, sealants)"
+  },
+  "view_routing": {
+    "_doc": "Step 6 routing: what each drawing type feeds.",
+    "profile_2d": "article",
+    "table": "article",
+    "assembly_section_2d": "assembly",
+    "assembly_isometric": "assembly",
+    "assembly_orthographic": "assembly"
   }
 }

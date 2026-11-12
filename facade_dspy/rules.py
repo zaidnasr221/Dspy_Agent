@@ -267,6 +267,16 @@ def default_article_type(name):
     return spec['article_type'] if spec else None
 
 
+# Step 9 of the classification process: only pieces are placed at intervals along a rail.
+PIECE_ONLY_FIELDS = ('edge_spacing', 'spacing')
+
+
+def view_feeds(view_type):
+    """Step 6 routing: 'article' for a single-article profile drawing or table (Article DB only),
+    'assembly' for a view of articles put together (Assembly DB); None when the view is unknown."""
+    return _profiles()['view_routing'].get(view_type or '')
+
+
 def is_fastener(node):
     return family(node) in _profiles()['fastener_families']
 
